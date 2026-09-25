@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.foxds.VoiceTranslator</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>FoxDS Voice Translator Pro</name>
+  <summary>Real-time neural voice translator with overlay for games and Discord</summary>
+  <description>
+    <p>
+      FoxDS Voice Translator Pro — это высокопроизводительный нейросетевой переводчик
+      голоса в реальном времени, созданный на связке Rust + Python. Разработан специально
+      для голосовой координации в онлайн-играх (Foxhole, Squad, CS2, VRChat) и Discord.
+    </p>
+    <p>Ключевые возможности:</p>
+    <ul>
+      <li>Мгновенный перевод речи в микрофон (RU ↔ EN) с помощью ультра-быстрых нейросетей Microsoft Edge-TTS и Google STT.</li>
+      <li>Прослушивание и синхронный перевод тиммейтов в реальном времени через системный аудиопоток (PulseAudio / PipeWire).</li>
+      <li>Аппаратная поддержка виртуального микрофона для прямой трансляции перевода в игры и голосовые чаты.</li>
+      <li>Плавающий игровой оверлей (HUD) с поддержкой прозрачности и настраиваемым позиционированием.</li>
+      <li>OCR распознавание и перевод экранного текста по горячей клавише (Alt+Q).</li>
+      <li>Интеллектуальная фильтрация радиошумов, нормализация громкости (RMS) и настраиваемый темп речи.</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">com.foxds.VoiceTranslator.desktop</launchable>
+  <url type="homepage">https://github.com/foxds/VoiceTranslator</url>
+  <provides>
+    <binary>foxds-voice-translator</binary>
+  </provides>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="3.0.0" date="2026-09-26">
+      <description>
+        <p>Крупный релиз v3.0 с кроссплатформенной поддержкой Linux, PipeWire/PulseAudio и Flatpak.</p>
+      </description>
+    </release>
+  </releases>
+</component>

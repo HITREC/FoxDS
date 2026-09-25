@@ -1,0 +1,43 @@
+name: Build Linux Flatpak Bundle
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  flatpak:
+    name: "Flatpak Bundle (Linux x86_64)"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Flatpak and Flatpak Builder
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder elfutils
+
+      - name: Setup Flathub
+        run: |
+          flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+
+      - name: Install Flatpak Runtimes
+        run: |
+          flatpak install -y --noninteractive flathub org.gnome.Platform//46 org.gnome.Sdk//46 org.freedesktop.Sdk.Extension.rust-stable//23.08
+
+      - name: Build Flatpak
+        run: |
+          flatpak-builder --force-clean --repo=repo build-dir packaging/flatpak/com.foxds.VoiceTranslator.yml
+
+      - name: Create Flatpak Bundle (.flatpak)
+        run: |
+          flatpak build-bundle repo foxds-voice-translator.flatpak com.foxds.VoiceTranslator
+
+      - name: Upload Flatpak Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: foxds-voice-translator-flatpak
+          path: foxds-voice-translator.flatpak

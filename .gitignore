@@ -1,0 +1,9 @@
+/target
+*.exe
+*.dll
+*.o
+*.WebView2/
+__pycache__/
+*.pyc
+.idea/
+.vscode/

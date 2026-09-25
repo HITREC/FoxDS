@@ -1,0 +1,54 @@
+app-id: com.foxds.VoiceTranslator
+runtime: org.gnome.Platform
+runtime-version: '46'
+sdk: org.gnome.Sdk
+command: foxds-voice-translator
+
+finish-args:
+  # Networking for Edge-TTS and Google STT / Translation
+  - --share=network
+  # IPC and Wayland / X11 displays
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  # Audio input and output (PulseAudio and PipeWire)
+  - --socket=pulseaudio
+  - --device=all
+  # User config directory
+  - --filesystem=xdg-config/foxds-voice-translator:create
+  - --talk-name=org.freedesktop.Notifications
+
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/foxds-voice-translator/cargo
+
+modules:
+  - name: foxds-voice-translator
+    buildsystem: simple
+    build-commands:
+      # 1. Compile 100% Pure Rust Application
+      - cargo build --release
+      # 2. Install application binary and launcher
+      - install -Dm755 target/release/foxds_voice_translator /app/bin/foxds_voice_translator
+      - install -Dm755 packaging/flatpak/foxds-voice-translator-wrapper.sh /app/bin/foxds-voice-translator
+      # 3. Install default config
+      - install -Dm644 config.json /app/share/foxds-voice-translator/config.json
+      # 4. Install Desktop integration
+      - install -Dm644 packaging/flatpak/com.foxds.VoiceTranslator.desktop /app/share/applications/com.foxds.VoiceTranslator.desktop
+      - install -Dm644 packaging/flatpak/com.foxds.VoiceTranslator.metainfo.xml /app/share/metainfo/com.foxds.VoiceTranslator.metainfo.xml
+      # 5. Install Application Icons
+      - install -Dm644 packaging/flatpak/icons/256x256/com.foxds.VoiceTranslator.png /app/share/icons/hicolor/256x256/apps/com.foxds.VoiceTranslator.png
+      - install -Dm644 packaging/flatpak/icons/128x128/com.foxds.VoiceTranslator.png /app/share/icons/hicolor/128x128/apps/com.foxds.VoiceTranslator.png
+      - install -Dm644 packaging/flatpak/icons/scalable/com.foxds.VoiceTranslator.svg /app/share/icons/hicolor/scalable/apps/com.foxds.VoiceTranslator.svg
+      # 6. Install Linux Virtual Microphone helper
+      - install -Dm755 packaging/flatpak/setup-virtual-mic-linux.sh /app/bin/setup-virtual-mic-linux.sh
+    build-options:
+      build-args:
+        - --share=network
+    sources:
+      - type: dir
+        path: ../..

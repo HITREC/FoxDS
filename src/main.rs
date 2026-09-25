@@ -1,0 +1,423 @@
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
+mod audio;
+mod audio_engine;
+mod audio_player;
+mod config;
+mod hotkeys;
+mod stt;
+mod system_stats;
+mod translator;
+mod tts;
+
+use audio_engine::{AppEvent, AudioEngine};
+use config::AppConfig;
+use parking_lot::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
+use tao::event::{Event, WindowEvent};
+use tao::event_loop::{ControlFlow, EventLoopBuilder};
+use tao::window::WindowBuilder;
+use wry::WebViewBuilder;
+
+const HTML_INDEX: &str = include_str!("../ui/index.html");
+const CSS_STYLE: &str = include_str!("../ui/style.css");
+const JS_APP: &str = include_str!("../ui/app.js");
+
+const HUD_HTML: &str = r#"<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+  html, body {
+    width: 100%; height: 100%;
+    background: transparent;
+    overflow: hidden;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  }
+  .hud-card {
+    width: 100%; height: 100%;
+    background: rgba(14, 18, 26, 0.92);
+    border: 2px solid #f25c05;
+    border-radius: 12px;
+    padding: 10px 18px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.7), 0 0 16px rgba(242, 92, 5, 0.35);
+    cursor: move;
+  }
+  .hud-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  .hud-dot {
+    width: 8px; height: 8px; border-radius: 50%; background: #3fb950;
+    box-shadow: 0 0 8px #3fb950;
+    transition: background 0.2s, box-shadow 0.2s;
+  }
+  .hud-badge {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    color: #f25c05;
+  }
+  .hud-trans {
+    font-size: 15px;
+    font-weight: 700;
+    color: #00f2fe;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .hud-orig {
+    font-size: 12px;
+    color: #8b949e;
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+</style>
+</head>
+<body>
+  <div class="hud-card" id="hud">
+    <div class="hud-header">
+      <div class="hud-dot" id="dot"></div>
+      <div class="hud-badge" id="badge">FOXDS TACTICAL HUD [F4: ГОВОРИТЬ]</div>
+    </div>
+    <div class="hud-trans" id="trans">FoxDS Pro: Ожидание голосовой команды...</div>
+    <div class="hud-orig" id="orig">Зажмите F4 для перевода речи или Alt+Q для OCR экрана</div>
+  </div>
+  <script>
+    window.updateHud = function(badge, orig, trans, color) {
+      if (badge) document.getElementById('badge').innerText = badge;
+      if (orig) document.getElementById('orig').innerText = orig;
+      if (trans) document.getElementById('trans').innerText = trans;
+      if (color) {
+        document.getElementById('hud').style.borderColor = color;
+        document.getElementById('dot').style.background = color;
+        document.getElementById('dot').style.boxShadow = '0 0 8px ' + color;
+      }
+    };
+    document.getElementById('hud').addEventListener('mousedown', function(e) {
+      if (window.ipc) { window.ipc.postMessage('drag_hud'); }
+    });
+  </script>
+</body>
+</html>"#;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 1. Load configuration
+    let config_path = config::get_config_path();
+    let config = Arc::new(Mutex::new(AppConfig::load_or_default(&config_path)));
+
+    // 2. Set up Tao Window & Event Loop with UserEvent
+    let event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build();
+    let proxy = event_loop.create_proxy();
+
+    // Main Control Panel Window
+    let window = WindowBuilder::new()
+        .with_title("FoxDS Voice Translator Pro")
+        .with_decorations(false)
+        .with_inner_size(tao::dpi::LogicalSize::new(1200.0, 780.0))
+        .with_min_inner_size(tao::dpi::LogicalSize::new(1000.0, 680.0))
+        .build(&event_loop)?;
+
+    let window = Arc::new(window);
+    let win_clone = window.clone();
+
+    // Floating In-Game HUD Subtitle Overlay Window
+    let (hud_pos_x, hud_pos_y, hud_w, hud_h) = {
+        let cfg = config.lock();
+        (cfg.overlay_x as f64, cfg.overlay_y as f64, cfg.overlay_w as f64, cfg.overlay_h as f64)
+    };
+
+    let hud_window = WindowBuilder::new()
+        .with_title("FoxDS Tactical Subtitle HUD")
+        .with_decorations(false)
+        .with_transparent(true)
+        .with_always_on_top(true)
+        .with_inner_size(tao::dpi::LogicalSize::new(hud_w.max(500.0), hud_h.max(90.0)))
+        .with_position(tao::dpi::LogicalPosition::new(hud_pos_x, hud_pos_y))
+        .build(&event_loop)?;
+
+    let hud_window = Arc::new(hud_window);
+    let hud_win_drag = hud_window.clone();
+
+    // 3. Assemble embedded HTML with inlined CSS and JS
+    let full_html = HTML_INDEX
+        .replace(
+            "<link rel=\"stylesheet\" href=\"style.css\">",
+            &format!("<style>{}</style>", CSS_STYLE),
+        )
+        .replace(
+            "<script src=\"app.js\"></script>",
+            &format!("<script>{}</script>", JS_APP),
+        );
+
+    // 4. Start Pure Rust Audio Engine (Mic capture, PTT F4, RMS VU-meter, STT, Translation, TTS)
+    let is_running = Arc::new(AtomicBool::new(true));
+    let engine = AudioEngine::new(config.clone(), proxy.clone(), is_running.clone());
+    engine.start();
+
+    // 5. System Stats Background Thread
+    let is_running_stats = is_running.clone();
+    thread::spawn(move || {
+        while is_running_stats.load(Ordering::SeqCst) {
+            let _stats = system_stats::SystemStats::current();
+            thread::sleep(Duration::from_millis(2000));
+        }
+    });
+
+    // 6. IPC handler for Main Control Panel
+    let config_clone = config.clone();
+    let config_path_clone = config_path.clone();
+    let is_running_clone = is_running.clone();
+    let proxy_ipc = proxy.clone();
+
+    let webview = WebViewBuilder::new()
+        .with_html(full_html)
+        .with_ipc_handler(move |req| {
+            let body = req.body();
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(body) {
+                if let Some(cmd) = val.get("cmd").and_then(|v| v.as_str()) {
+                    match cmd {
+                        "drag_window" => {
+                            let _ = win_clone.drag_window();
+                        }
+                        "minimize" => {
+                            win_clone.set_minimized(true);
+                        }
+                        "maximize" => {
+                            let is_max = win_clone.is_maximized();
+                            win_clone.set_maximized(!is_max);
+                        }
+                        "close" => {
+                            is_running_clone.store(false, Ordering::SeqCst);
+                            std::process::exit(0);
+                        }
+                        "app_ready" => {
+                            let cfg = config_clone.lock();
+                            if let Ok(cfg_json) = serde_json::to_string(&*cfg) {
+                                proxy_ipc.send_event(AppEvent::InitConfig(cfg_json)).ok();
+                            }
+                            let dev_json = AudioEngine::get_devices_json();
+                            proxy_ipc.send_event(AppEvent::AudioDevices(dev_json)).ok();
+                        }
+                        "slider_change" => {
+                            if let (Some(id), Some(val_num)) = (
+                                val.get("id").and_then(|v| v.as_str()),
+                                val.get("value").and_then(|v| v.as_f64()),
+                            ) {
+                                let mut cfg = config_clone.lock();
+                                match id {
+                                    "range-voice-speed" => cfg.speech_speed = val_num as u32,
+                                    "range-mic-gain" => cfg.mic_gain = (val_num / 100.0) as f32,
+                                    "range-tts-gain" => cfg.tts_gain = (val_num / 100.0) as f32,
+                                    "range-incoming-thresh" => cfg.rms_threshold = val_num as f32,
+                                    "range-ai-confidence" => cfg.min_confidence = (val_num / 100.0) as f32,
+                                    "range-ocr-delay" => cfg.ocr_appear_delay = (val_num / 10.0) as f32,
+                                    "range-ocr-duration" => cfg.ocr_display_duration = val_num as u32,
+                                    "range-overlay-font" => cfg.overlay_font_size = val_num as u32,
+                                    "range-overlay-alpha" => cfg.overlay_alpha = (val_num / 100.0) as f32,
+                                    "range-overlay-border-w" => cfg.overlay_border_width = val_num as u32,
+                                    _ => {}
+                                }
+                                let _ = cfg.save(&config_path_clone);
+                            }
+                        }
+                        "toggle_change" => {
+                            if let (Some(id), Some(checked)) = (
+                                val.get("id").and_then(|v| v.as_str()),
+                                val.get("checked").and_then(|v| v.as_bool()),
+                            ) {
+                                let mut cfg = config_clone.lock();
+                                match id {
+                                    "chk-passthrough" => cfg.passthrough_enabled = checked,
+                                    "chk-radio-filter" => cfg.radio_effect = checked,
+                                    "chk-play-self" => cfg.play_self_audio = checked,
+                                    "chk-incoming-subtitles" => cfg.incoming_enabled = checked,
+                                    "chk-filter-ru" => cfg.filter_russian = checked,
+                                    "chk-ignore-mic" => cfg.ignore_own_mic = checked,
+                                    "chk-auto-match" => cfg.auto_volume_match = checked,
+                                    "chk-ocr-enabled" => cfg.ocr_enabled = checked,
+                                    _ => {}
+                                }
+                                let _ = cfg.save(&config_path_clone);
+                            }
+                        }
+                        "voice_change" => {
+                            if let Some(voice) = val.get("voice").and_then(|v| v.as_str()) {
+                                let mut cfg = config_clone.lock();
+                                cfg.voice = voice.to_string();
+                                let _ = cfg.save(&config_path_clone);
+                            }
+                        }
+                        "device_change" => {
+                            let dtype = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                            let name = val.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                            let mut cfg = config_clone.lock();
+                            match dtype {
+                                "mic" => cfg.selected_mic = name.to_string(),
+                                "spk" => cfg.selected_headphones = name.to_string(),
+                                "cable" => cfg.selected_cable_in = name.to_string(),
+                                _ => {}
+                            }
+                            let _ = cfg.save(&config_path_clone);
+                        }
+                        "test_f4" => {
+                            // Synthesize test phrase and play to virtual cable AND headphones
+                            let cfg = config_clone.lock();
+                            let voice = cfg.voice.clone();
+                            let speed = cfg.speech_speed;
+                            let cable = cfg.selected_cable_in.clone();
+                            let hp = cfg.selected_headphones.clone();
+                            let play_self = cfg.play_self_audio;
+                            let tts_gain = cfg.tts_gain;
+                            drop(cfg);
+
+                            thread::spawn(move || {
+                                if let Ok(audio) = tts::synthesize_speech("Voice transmission test. FoxDS Pro is online.", &voice, speed) {
+                                    let _ = audio_player::play_tts_audio(&audio, &cable, &hp, play_self, tts_gain);
+                                }
+                            });
+                        }
+                        "test_incoming" => {
+                            proxy_ipc.send_event(AppEvent::SpeechEvent(
+                                "incoming".to_string(),
+                                "Teammate: Moving to objective Alpha, need covering fire!".to_string(),
+                                "Тиммейт: Движемся к точке Альфа, нужен прикрывающий огонь!".to_string(),
+                            )).ok();
+                        }
+                        "set_click_through" => {
+                            let locked = val.get("locked").and_then(|v| v.as_bool()).unwrap_or(false);
+                            let mut cfg = config_clone.lock();
+                            cfg.overlay_locked = locked;
+                            let _ = cfg.save(&config_path_clone);
+                        }
+                        "set_overlay_preset" => {
+                            if let Some(pos) = val.get("preset").and_then(|v| v.as_str()) {
+                                let mut cfg = config_clone.lock();
+                                cfg.overlay_preset = pos.to_string();
+                                let _ = cfg.save(&config_path_clone);
+                            }
+                        }
+                        "set_overlay_color" => {
+                            if let Some(col) = val.get("color").and_then(|v| v.as_str()) {
+                                let mut cfg = config_clone.lock();
+                                cfg.overlay_border_color = col.to_string();
+                                let _ = cfg.save(&config_path_clone);
+                            }
+                        }
+                        "save_voice_hotkey" => {
+                            if let Some(key) = val.get("key").and_then(|v| v.as_str()) {
+                                let mut cfg = config_clone.lock();
+                                cfg.hotkey = key.to_string();
+                                let _ = cfg.save(&config_path_clone);
+                            }
+                        }
+                        "save_ocr_hotkey" => {
+                            if let Some(key) = val.get("key").and_then(|v| v.as_str()) {
+                                let mut cfg = config_clone.lock();
+                                cfg.ocr_hotkey = key.to_string();
+                                let _ = cfg.save(&config_path_clone);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        })
+        .build(&*window)?;
+
+    // 7. HUD Webview
+    let hud_webview = WebViewBuilder::new()
+        .with_transparent(true)
+        .with_html(HUD_HTML)
+        .with_ipc_handler(move |req| {
+            if req.body().contains("drag_hud") {
+                let _ = hud_win_drag.drag_window();
+            }
+        })
+        .build(&*hud_window)?;
+
+    // 8. Run Main Tao Event Loop
+    event_loop.run(move |event, _, control_flow| {
+        *control_flow = ControlFlow::Wait;
+
+        match event {
+            Event::UserEvent(app_event) => match app_event {
+                AppEvent::InitConfig(json_str) => {
+                    let script = format!("window.initFromConfig({});", json_str);
+                    let _ = webview.evaluate_script(&script);
+                }
+                AppEvent::AudioDevices(json_str) => {
+                    let script = format!("window.setAudioDevices({});", json_str);
+                    let _ = webview.evaluate_script(&script);
+                }
+                AppEvent::SpeechEvent(stype, orig, trans) => {
+                    if let (Ok(s_json), Ok(o_json), Ok(t_json)) = (
+                        serde_json::to_string(&stype),
+                        serde_json::to_string(&orig),
+                        serde_json::to_string(&trans),
+                    ) {
+                        let script = format!("window.onRustSpeechEvent({}, {}, {});", s_json, o_json, t_json);
+                        let _ = webview.evaluate_script(&script);
+
+                        // Update In-Game HUD Subtitles
+                        let badge = if stype == "incoming" {
+                            "💬 ТИММЕЙТ"
+                        } else if stype == "ocr" {
+                            "📸 ПЕРЕВОД ЭКРАНА"
+                        } else {
+                            "🎙️ ВЫ СКАЗАЛИ"
+                        };
+                        let col = if stype == "incoming" {
+                            "#38d9a9"
+                        } else if stype == "ocr" {
+                            "#bc8cff"
+                        } else {
+                            "#00f2fe"
+                        };
+                        let hud_script = format!("window.updateHud('{}', {}, {}, '{}');", badge, o_json, t_json, col);
+                        let _ = hud_webview.evaluate_script(&hud_script);
+                    }
+                }
+                AppEvent::StatusEvent(status) => {
+                    let (txt, col) = match status.as_str() {
+                        "recording" => ("🔴 Запись речи...", "#f85149"),
+                        "processing" => ("⏳ Перевод речи ИИ...", "#d29922"),
+                        "listening" => ("💬 Тиммейт говорит...", "#38d9a9"),
+                        "ocr_processing" => ("📸 Считывание экрана...", "#bc8cff"),
+                        _ => ("🟢 Ожидание речи...", "#3fb950"),
+                    };
+                    let script = format!("window.updateEngineStatus('{}', '{}');", txt, col);
+                    let _ = webview.evaluate_script(&script);
+
+                    // Update HUD badge & dot indicator
+                    let hud_script = format!("window.updateHud('{}', '', '', '{}');", txt, col);
+                    let _ = hud_webview.evaluate_script(&hud_script);
+                }
+                AppEvent::VuEvent(mic, spk, active) => {
+                    let script = format!("window.updateRealVU({}, {}, {});", mic, spk, active);
+                    let _ = webview.evaluate_script(&script);
+                }
+            },
+            Event::WindowEvent {
+                event: WindowEvent::CloseRequested,
+                ..
+            } => {
+                is_running.store(false, Ordering::SeqCst);
+                *control_flow = ControlFlow::Exit;
+            }
+            _ => (),
+        }
+    });
+}

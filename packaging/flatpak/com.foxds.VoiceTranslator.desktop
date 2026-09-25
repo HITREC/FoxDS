@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=FoxDS Voice Translator Pro
+Comment=Нейросетевой голосовой переводчик реального времени с оверлеем для игр (Foxhole, Discord, VRChat)
+Exec=foxds-voice-translator
+Icon=com.foxds.VoiceTranslator
+Terminal=false
+Type=Application
+Categories=Utility;AudioVideo;Audio;AudioVideoEditing;
+Keywords=voice;translator;foxhole;discord;tts;stt;gaming;
+StartupNotify=true
+StartupWMClass=foxds_voice_translator

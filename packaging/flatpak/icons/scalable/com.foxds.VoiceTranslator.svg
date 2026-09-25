@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#161922"/>
+      <stop offset="100%" stop-color="#0b0d12"/>
+    </linearGradient>
+    <linearGradient id="orangeG" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff7a18"/>
+      <stop offset="100%" stop-color="#af002d"/>
+    </linearGradient>
+    <linearGradient id="cyanG" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00f2fe"/>
+      <stop offset="100%" stop-color="#4facfe"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+  <!-- Background squircle -->
+  <rect x="16" y="16" width="224" height="224" rx="48" fill="url(#bg)" stroke="#262a36" stroke-width="4"/>
+  <!-- Outer sound wave ring -->
+  <circle cx="128" cy="128" r="90" fill="none" stroke="url(#orangeG)" stroke-width="4" stroke-dasharray="12 12" opacity="0.4"/>
+  <circle cx="128" cy="128" r="76" fill="none" stroke="url(#cyanG)" stroke-width="3" stroke-dasharray="6 6" opacity="0.6"/>
+  <!-- Microphone Capsule -->
+  <rect x="108" y="64" width="40" height="80" rx="20" fill="url(#orangeG)" filter="url(#glow)"/>
+  <!-- Microphone Arc -->
+  <path d="M84,116 C84,152 172,152 172,116" fill="none" stroke="url(#cyanG)" stroke-width="8" stroke-linecap="round" filter="url(#glow)"/>
+  <!-- Stand Stem -->
+  <line x1="128" y1="152" x2="128" y2="186" stroke="url(#cyanG)" stroke-width="8" stroke-linecap="round"/>
+  <!-- Stand Base -->
+  <line x1="104" y1="186" x2="152" y2="186" stroke="url(#cyanG)" stroke-width="8" stroke-linecap="round"/>
+  <!-- Fox eye accents / Sound nodes -->
+  <circle cx="84" cy="116" r="6" fill="#00f2fe"/>
+  <circle cx="172" cy="116" r="6" fill="#ff7a18"/>
+</svg>

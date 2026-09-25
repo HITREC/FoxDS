@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FoxDS Voice Translator Pro</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <!-- Custom Titlebar (RustTweaker Dark Style) -->
+  <header class="titlebar" data-tauri-drag-region>
+    <div class="brand">
+      <div class="brand-logo">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+          <line x1="12" x2="12" y1="19" y2="22"/>
+        </svg>
+      </div>
+      <div class="brand-title">
+        <span>FOXDS TRANSLATOR PRO</span>
+        <span class="brand-badge">RUST v3.0</span>
+      </div>
+    </div>
+
+    <!-- Quick Status Badges -->
+    <div class="header-badges">
+      <span class="status-pill active" id="badge-hotkey">🎙️ Рация: [F4]</span>
+      <span class="status-pill active" id="badge-ocr">✂️ Экран: [ALT+Q]</span>
+      <span class="status-pill cursor-pointer" id="badge-lock">🔓 Оверлей: Подвижен</span>
+    </div>
+
+    <!-- Window Controls -->
+    <div class="window-controls">
+      <button class="win-btn" id="btn-min" title="Свернуть">
+        <svg width="12" height="12" viewBox="0 0 12 12"><rect y="5" width="12" height="2" fill="currentColor"/></svg>
+      </button>
+      <button class="win-btn" id="btn-max" title="Развернуть">
+        <svg width="12" height="12" viewBox="0 0 12 12"><rect x="1" y="1" width="10" height="10" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+      </button>
+      <button class="win-btn win-close" id="btn-close" title="Закрыть">
+        <svg width="12" height="12" viewBox="0 0 12 12"><path d="M1 1l10 10M11 1L1 11" stroke="currentColor" stroke-width="1.5"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Live Status & Dual VU Meter Bar -->
+  <section class="top-status-bar">
+    <div class="dual-vu-container">
+      <div class="vu-unit">
+        <span class="vu-title">🎤 Микрофон:</span>
+        <div class="vu-track">
+          <div class="vu-fill mic" id="vu-mic-fill"></div>
+        </div>
+        <span class="vu-status-txt" id="vu-mic-status">ГОЛОС</span>
+      </div>
+      <div class="vu-unit">
+        <span class="vu-title">🎧 Звук Discord / Игры:</span>
+        <div class="vu-track">
+          <div class="vu-fill spk" id="vu-spk-fill"></div>
+        </div>
+        <span class="vu-status-txt spk" id="vu-spk-status">СЛУШАЕТ</span>
+      </div>
+    </div>
+
+    <!-- Live Translation Stream Box (From Original App) -->
+    <div class="live-stream-box">
+      <div class="live-stream-header">
+        <span class="live-stream-title">💬 Прямой эфир перевода (Текущая речь / Экран)</span>
+        <span class="live-stream-badge" id="live-engine-status">🟢 Ожидание речи...</span>
+      </div>
+      <div class="live-orig-text" id="live-orig">Оригинал: <span>"—"</span></div>
+      <div class="live-trans-text" id="live-trans">Перевод: <span>"—"</span></div>
+    </div>
+  </section>
+
+  <!-- Navigation Tabs (RustTweaker Styled) -->
+  <nav class="nav-tabs">
+    <button class="nav-tab active" data-tab="tab-voice">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+      <span>🎙️ Голос (Рация F4)</span>
+    </button>
+    <button class="nav-tab" data-tab="tab-teammates">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
+      <span>🎧 Тиммейты</span>
+    </button>
+    <button class="nav-tab" data-tab="tab-ocr">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
+      <span>📸 С экрана (OCR)</span>
+    </button>
+    <button class="nav-tab" data-tab="tab-overlay">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      <span>🖥️ Оверлей и Вид</span>
+    </button>
+    <button class="nav-tab" data-tab="tab-history">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="9"/></svg>
+      <span>📜 История</span>
+    </button>
+    <button class="nav-tab" data-tab="tab-devices">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      <span>⚙️ Устройства</span>
+    </button>
+  </nav>
+
+  <!-- Main Content Container -->
+  <main class="content-viewport">
+    
+    <!-- TAB 1: ГОЛОС (РАЦИЯ F4) -->
+    <section class="tab-pane active" id="tab-voice">
+      <div class="page-header">
+        <h1 class="page-title">Настройки вашей речи в войсчат (Рация)</h1>
+      </div>
+
+      <div class="two-column-layout">
+        <div class="controls-column">
+          <!-- Hotkey & Voice Selection Card -->
+          <div class="card">
+            <div class="card-header-row">
+              <div>
+                <div class="card-title">Клавиша рации и Голос ИИ</div>
+                <div class="card-desc">Зажмите клавишу, говорите по-русски — ИИ озвучит идеальный английский</div>
+              </div>
+            </div>
+
+            <div class="form-row-grid" style="margin-top: 14px;">
+              <div class="input-field-group">
+                <label class="field-label">Клавиша рации (PTT):</label>
+                <div class="input-with-button">
+                  <input type="text" id="cfg-voice-hotkey" value="F4" class="custom-input key-input">
+                  <button class="btn-secondary" id="btn-save-voice-hk">Сохранить</button>
+                </div>
+              </div>
+
+              <div class="input-field-group">
+                <label class="field-label">Нейросетевой голос ИИ:</label>
+                <select id="cfg-voice-select" class="custom-select">
+                  <option value="en-US-BrianMultilingualNeural" selected>🌟 Brian (Самый живой и человечный) ★</option>
+                  <option value="en-US-ChristopherNeural">🎙️ Christopher (Тёплый глубокий мужской)</option>
+                  <option value="en-US-AndrewMultilingualNeural">🔥 Andrew (Естественный разговорный)</option>
+                  <option value="en-US-EricNeural">🎮 Eric (Живой геймерский / Casual)</option>
+                  <option value="en-GB-RyanNeural">🇬🇧 Ryan (Британский союзник)</option>
+                  <option value="en-US-AvaMultilingualNeural">👩 Ava (Естественный женский голос)</option>
+                  <option value="en-US-EmmaMultilingualNeural">🌸 Emma (Мягкий женский)</option>
+                  <option value="en-US-GuyNeural">🎖️ Guy (Тактический боец / Рация)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Sliders List -->
+          <div class="sliders-list">
+            <!-- Speech Speed -->
+            <div class="slider-card" data-preview-type="speech_speed">
+              <div class="slider-header">
+                <span class="slider-label">Скорость произношения речи ИИ</span>
+                <span class="slider-value" id="val-voice-speed">100% (Естественный)</span>
+              </div>
+              <div class="range-container">
+                <input type="range" id="range-voice-speed" min="80" max="130" value="100" class="custom-slider">
+              </div>
+            </div>
+
+            <!-- Mic Gain -->
+            <div class="slider-card" data-preview-type="mic_gain">
+              <div class="slider-header">
+                <span class="slider-label">Громкость своего микрофона</span>
+                <span class="slider-value" id="val-mic-gain">100%</span>
+              </div>
+              <div class="range-container">
+                <input type="range" id="range-mic-gain" min="50" max="200" value="100" class="custom-slider">
+              </div>
+            </div>
+
+            <!-- TTS Gain -->
+            <div class="slider-card" data-preview-type="tts_gain">
+              <div class="slider-header">
+                <span class="slider-label">Громкость озвучки перевода (ИИ)</span>
+                <span class="slider-value" id="val-tts-gain">120%</span>
+              </div>
+              <div class="range-container">
+                <input type="range" id="range-tts-gain" min="30" max="200" value="120" class="custom-slider">
+              </div>
+            </div>
+
+            <!-- Toggles -->
+            <div class="toggle-card" data-preview-type="passthrough">
+              <div class="toggle-info">
+                <span class="toggle-label">Сквозной микрофон (Passthrough)</span>
+                <span class="toggle-desc">Позволяет говорить по-русски союзникам без зажатия клавиши F4</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="chk-passthrough" checked>
+                <span class="slider-toggle"></span>
+              </label>
+            </div>
+
+            <div class="toggle-card" data-preview-type="radio_filter">
+              <div class="toggle-info">
+                <span class="toggle-label">📻 Радиофильтр Foxhole (эффект рации)</span>
+                <span class="toggle-desc">Полосовой фильтр 300Hz-3400Hz с аналоговым насыщением для звука боевой рации</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="chk-radio-filter">
+                <span class="slider-toggle"></span>
+              </label>
+            </div>
+
+            <div class="toggle-card" data-preview-type="play_self">
+              <div class="toggle-info">
+                <span class="toggle-label">Слышать свой перевод в наушниках</span>
+                <span class="toggle-desc">Воспроизводит английскую реплику в наушниках для мгновенного контроля</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="chk-play-self" checked>
+                <span class="slider-toggle"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Preview Column -->
+        <div class="preview-column">
+          <div class="preview-card">
+            <div class="preview-header">
+              <h3 class="preview-title" id="preview-heading-voice">Радиофильтр и передача голоса</h3>
+              <p class="preview-text" id="preview-body-voice">
+                При зажатии клавиши F4 ваш реальный микрофон мгновенно глушится (Zero-Leakage), звук записывается и передается в нейросеть. В Discord и Foxhole звучит чистый английский перевод.
+              </p>
+            </div>
+
+            <div class="preview-media-box">
+              <div class="waveform-animation">
+                <span class="wave-bar"></span>
+                <span class="wave-bar"></span>
+                <span class="wave-bar"></span>
+                <span class="wave-bar"></span>
+                <span class="wave-bar"></span>
+                <span class="wave-bar"></span>
+                <span class="wave-bar"></span>
+                <span class="wave-bar"></span>
+              </div>
+              <div class="preview-tag">ПРЕДПРОСМОТР РАЦИИ F4</div>
+            </div>
+
+            <div class="preview-actions">
+              <button class="btn-primary" id="btn-test-f4">
+                <span>▶️ Тест перевода F4 в наушники</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: ТИММЕЙТЫ (INCOMING SPEECH) -->
+    <section class="tab-pane" id="tab-teammates">
+      <div class="page-header">
+        <h1 class="page-title">Перевод речи тиммейтов (Discord / Игра -> Экран)</h1>
+      </div>
+
+      <div class="two-column-layout">
+        <div class="controls-column">
+          <!-- Main Toggle Card -->
+          <div class="card">
+            <div class="toggle-card-plain">
+              <div class="toggle-info">
+                <span class="toggle-label" style="font-size: 14px;">Субтитры перевода тиммейтов на экране</span>
+                <span class="toggle-desc">Захватывает английскую речь из наушников и выводит русский перевод в оверлей</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="chk-incoming-subtitles" checked>
+                <span class="slider-toggle"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="sliders-list">
+            <!-- 3-level Russian Filter -->
+            <div class="toggle-card" data-preview-type="filter_ru">
+              <div class="toggle-info">
+                <span class="toggle-label">🛡️ Фильтр русской речи (игнорировать русскую речь)</span>
+                <span class="toggle-desc">Предотвращает ложный перевод, если русскоязычный тиммейт заговорил в войс-чат</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="chk-filter-ru" checked>
+                <span class="slider-toggle"></span>
+              </label>
+            </div>
+
+            <!-- Ignore Own Mic Echo -->
+            <div class="toggle-card" data-preview-type="ignore_mic">
+              <div class="toggle-info">
+                <span class="toggle-label">🔇 Игнорировать эхо своего голоса (микрофона)</span>
+                <span class="toggle-desc">Защита от акустического отражения и захвата вашей собственной речи</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="chk-ignore-mic" checked>
+                <span class="slider-toggle"></span>
+              </label>
+            </div>
+
+            <!-- Volume auto match -->
+            <div class="toggle-card" data-preview-type="auto_match">
+              <div class="toggle-info">
+                <span class="toggle-label">Автоматически выравнивать громкость под голос</span>
+                <span class="toggle-desc">Авто-балансировка уровня звука перевода для идеальной слышимости</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="chk-auto-match" checked>
+                <span class="slider-toggle"></span>
+              </label>
+            </div>
+
+            <!-- Capture Threshold -->
+            <div class="slider-card" data-preview-type="rms_threshold">
+              <div class="slider-header">
+                <span class="slider-label">Чувствительность захвата речи (порог громкости)</span>
+                <span class="slider-value" id="val-incoming-thresh">35</span>
+              </div>
+              <div class="range-container">
+                <input type="range" id="range-incoming-thresh" min="10" max="120" value="35" class="custom-slider">
+              </div>
+            </div>
+
+            <!-- AI Confidence -->
+            <div class="slider-card" data-preview-type="ai_confidence">
+              <div class="slider-header">
+                <span class="slider-label">Строгость отсечения русской речи (уверенность ИИ)</span>
+                <span class="slider-value" id="val-ai-confidence">62% (Рекомендуется)</span>
+              </div>
+              <div class="range-container">
+                <input type="range" id="range-ai-confidence" min="40" max="90" value="62" class="custom-slider">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Preview Column -->
+        <div class="preview-column">
+          <div class="preview-card">
+            <div class="preview-header">
+              <h3 class="preview-title" id="preview-heading-teammates">Фильтрация и распознавание речи</h3>
+              <p class="preview-text" id="preview-body-teammates">
+                Интеллектуальный фильтр анализирует фонетику и спектр входящего звука, игнорируя фоновые выстрелы, взрывы Foxhole и речь на русском языке.
+              </p>
+            </div>
+
+            <div class="preview-media-box">
+              <div class="mic-status-visualizer">
+                <div class="mic-icon-circle active">
+                  <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
+                </div>
+                <span class="arrow-indicator">➔</span>
+                <div class="cable-icon-circle">
+                  <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><rect x="2" y="3" width="20" height="14" rx="2"/></svg>
+                </div>
+              </div>
+              <div class="preview-tag">DISCORD & FOXHOLE LOOPBACK</div>
+            </div>
+
+            <div class="preview-actions">
+              <button class="btn-primary" id="btn-test-incoming">
+                <span>🎧 Проверить перевод речи тиммейта (EN -> RU)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: С ЭКРАНА (SCREEN AREA OCR) -->
+    <section class="tab-pane" id="tab-ocr">
+      <div class="page-header">
+        <h1 class="page-title">Выделение и перевод области экрана (OCR)</h1>
+      </div>
+
+      <div class="two-column-layout">
+        <div class="controls-column">
+          <!-- OCR Hotkey Card -->
+          <div class="card">
+            <div class="card-header-row">
+              <div>
+                <div class="card-title">Горячая клавиша захвата области</div>
+                <div class="card-desc">Нажмите комбинацию, выделите любой блок текста рамкой — перевод появится в оверлее</div>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="chk-ocr-enabled" checked>
+                <span class="slider-toggle"></span>
+              </label>
+            </div>
+
+            <div class="form-row-grid" style="margin-top: 14px;">
+              <div class="input-field-group">
+                <label class="field-label">Комбинация клавиш:</label>
+                <div class="input-with-button">
+                  <input type="text" id="cfg-ocr-hotkey" value="ALT+Q" class="custom-input key-input">
+                  <button class="btn-secondary" id="btn-save-ocr-hk">Сохранить</button>
+                </div>
+              </div>
+              <button class="btn-primary" id="btn-trigger-snipping" style="height: 40px; margin-top: 18px;">
+                <span>✂️ Выделить область прямо сейчас</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Sliders: Delays & Duration -->
+          <div class="sliders-list">
+            <div class="slider-card" data-preview-type="ocr_delay">
+              <div class="slider-header">
+                <span class="slider-label">⏳ Пауза перед выводом перевода</span>
+                <span class="slider-value" id="val-ocr-delay">0.6 сек</span>
+              </div>
+              <div class="range-container">
+                <input type="range" id="range-ocr-delay" min="0" max="20" value="6" class="custom-slider">
+              </div>
+            </div>
+
+            <div class="slider-card" data-preview-type="ocr_duration">
+              <div class="slider-header">
+                <span class="slider-label">⏱️ Время показа перевода на экране</span>
+                <span class="slider-value" id="val-ocr-duration">12 сек</span>
+              </div>
+              <div class="range-container">
+                <input type="range" id="range-ocr-duration" min="3" max="60" value="12" class="custom-slider">
+              </div>
+            </div>
+
+            <!-- Last Recognized Result Card -->
+            <div class="card">
+              <div class="card-title" style="color: #38d9a9;">📄 Последний распознанный текст экрана</div>
+              <div class="ocr-result-row">
+                <div class="ocr-orig-lbl">Оригинал: <span id="ocr-last-orig">"Ready for frontline deployment at Warden checkpoint"</span></div>
+                <div class="ocr-trans-lbl">Перевод: <span id="ocr-last-trans">"Готов к развертыванию на передовой на контрольно-пропускном пункте Варденов"</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Column Instruction -->
+        <div class="preview-column">
+          <div class="preview-card">
+            <div class="preview-header">
+              <h3 class="preview-title">Инструкция по OCR переводу</h3>
+              <p class="preview-text">
+                1. В Foxhole, Discord или браузере нажмите [ALT+Q].<br>
+                2. Экран затемнится, появится перекрестие (как Win+Shift+S).<br>
+                3. Зажмите левую кнопку мыши и выделите рамкой нужный текст.<br>
+                4. Отпустите мышь — перевод моментально выводится в оверлей.<br>
+                5. Отмена выделения: клавиша [ESC].
+              </p>
+            </div>
+
+            <div class="preview-media-box">
+              <div class="preview-tweak-graphic">
+                <div class="ocr-snip-frame-demo">
+                  <span class="corner tl"></span>
+                  <span class="corner tr"></span>
+                  <span class="corner bl"></span>
+                  <span class="corner br"></span>
+                  <span class="snip-demo-text">TEXT SNIP [ALT+Q]</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 4: ОВЕРЛЕЙ И ВИД (HUD OVERLAY) -->
+    <section class="tab-pane" id="tab-overlay">
+      <div class="page-header">
+        <h1 class="page-title">Настройки HUD-оверлея субтитров</h1>
+      </div>
+
+      <div class="two-column-layout">
+        <div class="controls-column">
+          <!-- Mini Preview Frame -->
+          <div class="card">
+            <div class="card-title">👁️ Интерактивный предпросмотр оверлея</div>
+            <div class="hud-mini-preview-box" id="hud-preview-box">
+              <div class="hud-mini-status">🟢 СУБТИТРЫ ПЕРЕВОДА (Предпросмотр)</div>
+              <div class="hud-mini-body">
+                RU: "Вражеский танк на дороге, нужна помощь!"<br>
+                <span class="hud-mini-sub">(EN: "Enemy tank on the road, need backup!")</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Position Presets -->
+          <div class="card" style="margin-top: 14px;">
+            <div class="card-title">📍 Быстрое расположение на экране (Пресеты)</div>
+            <div class="presets-btn-grid">
+              <button class="btn-preset active" data-pos="bottom_center">📌 Снизу по центру</button>
+              <button class="btn-preset" data-pos="top_center">📌 Сверху по центру</button>
+              <button class="btn-preset" data-pos="bottom_right">📌 Снизу справа</button>
+              <button class="btn-preset" data-pos="top_right">📌 Сверху справа</button>
+            </div>
+          </div>
+
+          <!-- Overlay Settings Form -->
+          <div class="sliders-list">
+            <div class="slider-card" data-preview-type="overlay_font">
+              <div class="slider-header">
+                <span class="slider-label">Размер шрифта субтитров</span>
+                <span class="slider-value" id="val-overlay-font">12 px</span>
+              </div>
+              <div class="range-container">
+                <input type="range" id="range-overlay-font" min="8" max="22" value="12" class="custom-slider">
+              </div>
+            </div>
+
+            <div class="slider-card" data-preview-type="overlay_alpha">
+              <div class="slider-header">
+                <span class="slider-label">Прозрачность фона оверлея</span>
+                <span class="slider-value" id="val-overlay-alpha">92%</span>
+              </div>
+              <div class="range-container">
+                <input type="range" id="range-overlay-alpha" min="30" max="100" value="92" class="custom-slider">
+              </div>
+            </div>
+
+            <div class="slider-card" data-preview-type="overlay_border">
+              <div class="slider-header">
+                <span class="slider-label">Толщина рамки</span>
+                <span class="slider-value" id="val-overlay-border-w">2 px</span>
+              </div>
+              <div class="range-container">
+                <input type="range" id="range-overlay-border-w" min="1" max="4" value="2" class="custom-slider">
+              </div>
+            </div>
+
+            <div class="toggle-card">
+              <div class="toggle-info">
+                <span class="toggle-label">🔒 Режим «Клик-сквозь» (Click-Through)</span>
+                <span class="toggle-desc">Клики мыши проходят сквозь оверлей прямо в игру, исключая случайные нажатия</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="chk-click-through">
+                <span class="slider-toggle"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Column: Palette & Save -->
+        <div class="preview-column">
+          <div class="preview-card">
+            <div class="preview-header">
+              <h3 class="preview-title">Цветовая палитра рамки</h3>
+              <p class="preview-text">Выберите неоновый оттенок границы оверлея под цветовую гамму вашей игры:</p>
+            </div>
+
+            <div class="color-palette-grid">
+              <div class="color-dot active" data-color="#f25c05" style="background: #f25c05;" title="FoxDS Orange"></div>
+              <div class="color-dot" data-color="#58a6ff" style="background: #58a6ff;" title="Cyber Blue"></div>
+              <div class="color-dot" data-color="#3fb950" style="background: #3fb950;" title="Military Green"></div>
+              <div class="color-dot" data-color="#a371f7" style="background: #a371f7;" title="Neon Purple"></div>
+              <div class="color-dot" data-color="#f0883e" style="background: #f0883e;" title="Warm Gold"></div>
+            </div>
+
+            <div class="preview-actions">
+              <button class="btn-primary" id="btn-save-overlay-cfg">
+                <span>Применить настройки оверлея</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 5: ИСТОРИЯ И ЛОГ -->
+    <section class="tab-pane" id="tab-history">
+      <div class="page-header">
+        <h1 class="page-title">История перевода и сессии</h1>
+      </div>
+
+      <div class="card">
+        <div class="card-header-row">
+          <div class="card-title">Журнал переведенных фраз текущей игры</div>
+          <button class="btn-secondary" id="btn-clear-history">Очистить историю</button>
+        </div>
+
+        <div class="history-log-list" id="history-items-list">
+          <div class="history-item">
+            <span class="hist-time">07:42:15</span>
+            <span class="hist-tag tag-f4">РАЦИЯ F4</span>
+            <div class="hist-content">
+              <div class="hist-ru">RU: "Прикройте меня с фланга, подтягиваю патроны"</div>
+              <div class="hist-en">EN: "Cover me from the flank, bringing up ammo"</div>
+            </div>
+          </div>
+          <div class="history-item">
+            <span class="hist-time">07:44:30</span>
+            <span class="hist-tag tag-spk">ТИММЕЙТ</span>
+            <div class="hist-content">
+              <div class="hist-ru">EN: "Enemy artillery zeroing in on bridge, fall back!"</div>
+              <div class="hist-en">RU: "Вражеская артиллерия пристреливается по мосту, отступайте!"</div>
+            </div>
+          </div>
+          <div class="history-item">
+            <span class="hist-time">07:48:02</span>
+            <span class="hist-tag tag-ocr">OCR ЭКРАН</span>
+            <div class="hist-content">
+              <div class="hist-ru">EN: "Colonial Heavy Mortar Shell x15"</div>
+              <div class="hist-en">RU: "Тяжелый минометный снаряд Колониалов x15"</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 6: УСТРОЙСТВА И ПОДСКАЗКИ -->
+    <section class="tab-pane" id="tab-devices">
+      <div class="page-header">
+        <h1 class="page-title">Звуковые устройства Windows и интеграция</h1>
+      </div>
+
+      <div class="settings-sections">
+        <div class="card">
+          <div class="card-title">Назначение аудио-устройств</div>
+          <div class="card-desc">Выберите ваши физические микрофон, наушники и виртуальный кабель VB-Cable</div>
+
+          <div class="devices-grid">
+            <div class="device-select-item">
+              <label class="dev-label">Входной микрофон (Голос):</label>
+              <select id="sel-mic-device" class="custom-select dev-select">
+                <option value="default">Загрузка микрофонов...</option>
+              </select>
+            </div>
+            <div class="device-select-item">
+              <label class="dev-label">Наушники (Слушать Discord/Игру):</label>
+              <select id="sel-spk-device" class="custom-select dev-select">
+                <option value="default">Загрузка наушников...</option>
+              </select>
+            </div>
+            <div class="device-select-item">
+              <label class="dev-label">Рация в игре (CABLE Input):</label>
+              <select id="sel-cable-device" class="custom-select dev-select">
+                <option value="cable">CABLE Input (VB-Audio Virtual Cable)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="card guide-card">
+          <div class="card-title" style="color: #e3b341;">💡 Настройка в Discord и Foxhole (Важно!)</div>
+          <div class="guide-text">
+            <b>В Discord (Настройки -> Голос и видео -> Устройство ввода / Микрофон):</b><br>
+            • Выберите: <code>CABLE Output (VB-Audio Virtual Cable)</code><br><br>
+            <b>В Foxhole (Settings -> Audio -> Microphone):</b><br>
+            • Выберите: <code>CABLE Output (VB-Audio Virtual Cable)</code><br><br>
+            <b>В Foxhole (Settings -> Video):</b><br>
+            • Включите режим экрана: <code>Borderless Windowed</code> (Окно без рамок), чтобы Windows не прятала оверлей субтитров под полноэкранной игрой!
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
