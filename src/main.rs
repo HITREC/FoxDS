@@ -272,13 +272,21 @@ const HUD_HTML: &str = r#"<!DOCTYPE html>
   .hud-header {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 8px;
     margin-bottom: 4px;
+  }
+  .hud-header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    overflow: hidden;
   }
   .hud-dot {
     width: 8px; height: 8px; border-radius: 50%; background: #3fb950;
     box-shadow: 0 0 8px #3fb950;
     transition: background 0.2s, box-shadow 0.2s;
+    flex-shrink: 0;
   }
   .hud-badge {
     font-size: 11px;
@@ -287,6 +295,31 @@ const HUD_HTML: &str = r#"<!DOCTYPE html>
     text-transform: uppercase;
     color: #f25c05;
     transition: color 0.15s ease;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .hud-lock-btn {
+    background: rgba(242, 92, 5, 0.2);
+    border: 1px solid #f25c05;
+    color: #ffffff;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.15s ease;
+    font-family: inherit;
+    white-space: nowrap;
+    user-select: none;
+    flex-shrink: 0;
+  }
+  .hud-lock-btn:hover {
+    background: #f25c05;
+    box-shadow: 0 0 10px rgba(242, 92, 5, 0.6);
   }
   .hud-trans {
     font-size: 15px;
@@ -311,8 +344,11 @@ const HUD_HTML: &str = r#"<!DOCTYPE html>
 <body>
   <div class="hud-card" id="hud">
     <div class="hud-header">
-      <div class="hud-dot" id="dot"></div>
-      <div class="hud-badge" id="badge">FOXDS TACTICAL HUD [F4: ГОВОРИТЬ]</div>
+      <div class="hud-header-left">
+        <div class="hud-dot" id="dot"></div>
+        <div class="hud-badge" id="badge">FOXDS TACTICAL HUD [F4: ГОВОРИТЬ]</div>
+      </div>
+      <button class="hud-lock-btn" id="btn-hud-lock" title="Зафиксировать оверлей на этом месте (включить клик-сквозь в игру)">🔒 Зафиксировать</button>
     </div>
     <div class="hud-trans" id="trans">FoxDS Pro: Ожидание голосовой команды...</div>
     <div class="hud-orig" id="orig">Зажмите F4 для перевода речи или Alt+Q для OCR экрана</div>
@@ -350,14 +386,30 @@ const HUD_HTML: &str = r#"<!DOCTYPE html>
         }
         const badge = document.getElementById('badge');
         if (badge) badge.style.color = borderColor;
+        const lockBtn = document.getElementById('btn-hud-lock');
+        if (lockBtn) {
+          lockBtn.style.borderColor = borderColor;
+          lockBtn.style.background = borderColor + '33';
+        }
       }
       if (borderWidth) {
         hud.style.borderWidth = borderWidth + 'px';
       }
     };
 
+    document.getElementById('btn-hud-lock').addEventListener('mousedown', function(e) {
+      e.stopPropagation();
+    });
+    document.getElementById('btn-hud-lock').addEventListener('click', function(e) {
+      e.stopPropagation();
+      if (window.ipc) { window.ipc.postMessage('lock_hud'); }
+    });
+
     document.getElementById('hud').addEventListener('mousedown', function(e) {
-      if (window.ipc) { window.ipc.postMessage('drag_hud'); }
+      if (e.target.closest('#btn-hud-lock')) return;
+      if (e.button === 0) {
+        if (window.ipc) { window.ipc.postMessage('drag_hud'); }
+      }
     });
   </script>
 </body>
@@ -690,12 +742,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build(&*window)?;
 
     // 7. HUD Webview
+    let proxy_hud = proxy.clone();
+    let config_hud = config.clone();
+    let config_path_hud = config_path.clone();
+
     let hud_webview = WebViewBuilder::new()
         .with_transparent(true)
         .with_html(HUD_HTML)
         .with_ipc_handler(move |req| {
-            if req.body().contains("drag_hud") {
+            let body = req.body();
+            if body.contains("drag_hud") {
                 let _ = hud_win_drag.drag_window();
+            } else if body.contains("lock_hud") {
+                let mut cfg = config_hud.lock();
+                cfg.overlay_locked = true;
+                let _ = cfg.save(&config_path_hud);
+                proxy_hud.send_event(AppEvent::SetHudLocked(true)).ok();
             }
         })
         .build(&*hud_window)?;
@@ -863,6 +925,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 AppEvent::SetHudLocked(locked) => {
                     let _ = hud_window.set_ignore_cursor_events(locked);
+                    let script = format!("if (window.onOverlayLockChanged) window.onOverlayLockChanged({});", locked);
+                    let _ = webview.evaluate_script(&script);
                 }
                 AppEvent::OpenSniper => {
                     sniper_window.set_visible(true);
@@ -871,11 +935,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             },
             Event::WindowEvent {
-                event: WindowEvent::CloseRequested,
+                window_id,
+                event,
                 ..
             } => {
-                is_running.store(false, Ordering::SeqCst);
-                *control_flow = ControlFlow::Exit;
+                match event {
+                    WindowEvent::CloseRequested => {
+                        is_running.store(false, Ordering::SeqCst);
+                        *control_flow = ControlFlow::Exit;
+                    }
+                    WindowEvent::Moved(pos) => {
+                        if window_id == hud_window.id() {
+                            let mut cfg = config.lock();
+                            cfg.overlay_x = pos.x;
+                            cfg.overlay_y = pos.y;
+                            let _ = cfg.save(&config_path);
+                        }
+                    }
+                    _ => ()
+                }
             }
             _ => (),
         }

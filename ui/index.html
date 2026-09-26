@@ -27,7 +27,10 @@
     <div class="header-badges">
       <span class="status-pill active" id="badge-hotkey">🎙️ Рация: [F4]</span>
       <span class="status-pill active" id="badge-ocr">✂️ Экран: [ALT+Q]</span>
-      <span class="status-pill cursor-pointer" id="badge-lock">🔓 Оверлей: Подвижен</span>
+      <button class="btn-overlay-lock" id="btn-header-lock" title="Нажмите, чтобы зафиксировать или разблокировать оверлей для перемещения">
+        <span id="badge-lock-icon">🔓</span>
+        <span id="badge-lock-text">Оверлей подвижен [Зафиксировать]</span>
+      </button>
     </div>
 
     <!-- Window Controls -->
@@ -474,6 +477,21 @@
 
       <div class="two-column-layout">
         <div class="controls-column">
+          <!-- Lock / Unlock Action Card -->
+          <div class="card lock-hero-card">
+            <div class="lock-hero-header">
+              <div class="lock-hero-icon" id="lock-hero-icon">🔓</div>
+              <div class="lock-hero-info">
+                <div class="lock-hero-title" id="lock-hero-title">Оверлей разблокирован — можно перемещать мышкой</div>
+                <div class="lock-hero-desc" id="lock-hero-desc">Зажмите левую кнопку мыши на оверлее на экране и перетащите в удобное место. Затем нажмите «Зафиксировать оверлей», чтобы включить «клик-сквозь» в игру.</div>
+              </div>
+            </div>
+            <button class="btn-toggle-lock-hero" id="btn-toggle-lock-hero">
+              <span id="btn-hero-icon">🔒</span>
+              <span id="btn-hero-text">Зафиксировать оверлей на этом месте</span>
+            </button>
+          </div>
+
           <!-- Mini Preview Frame -->
           <div class="card">
             <div class="card-title">👁️ Интерактивный предпросмотр оверлея</div>

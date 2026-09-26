@@ -169,40 +169,100 @@ function initDropdowns() {
 }
 
 // --- Overlay Controls & Presets ---
-function initOverlayControls() {
-  const badgeLock = document.getElementById('badge-lock');
-  let isLocked = false;
+let isOverlayLocked = false;
 
-  if (badgeLock) {
-    badgeLock.addEventListener('click', () => {
-      isLocked = !isLocked;
-      const chk = document.getElementById('chk-click-through');
-      if (chk) chk.checked = isLocked;
-      updateLockUI(isLocked);
-    });
+function updateLockUI(locked, notifyBackend = true) {
+  isOverlayLocked = !!locked;
+
+  // 1. Header Lock Button
+  const headerBtn = document.getElementById('btn-header-lock') || document.getElementById('badge-lock');
+  const lockIcon = document.getElementById('badge-lock-icon');
+  const lockText = document.getElementById('badge-lock-text');
+
+  if (headerBtn) {
+    if (locked) {
+      if (lockIcon) lockIcon.textContent = '🔒';
+      if (lockText) lockText.textContent = 'Оверлей зафиксирован [Разблокировать]';
+      else headerBtn.textContent = '🔒 Оверлей зафиксирован [Разблокировать]';
+      headerBtn.classList.add('locked');
+      headerBtn.style.color = '#3fb950';
+      headerBtn.style.borderColor = 'rgba(63, 185, 80, 0.6)';
+      headerBtn.style.background = 'rgba(63, 185, 80, 0.15)';
+    } else {
+      if (lockIcon) lockIcon.textContent = '🔓';
+      if (lockText) lockText.textContent = 'Оверлей подвижен [Зафиксировать]';
+      else headerBtn.textContent = '🔓 Оверлей подвижен [Зафиксировать]';
+      headerBtn.classList.remove('locked');
+      headerBtn.style.color = '#f25c05';
+      headerBtn.style.borderColor = 'rgba(242, 92, 5, 0.6)';
+      headerBtn.style.background = 'rgba(242, 92, 5, 0.15)';
+    }
   }
+
+  // 2. Tab 3 Hero Card
+  const heroIcon = document.getElementById('lock-hero-icon');
+  const heroTitle = document.getElementById('lock-hero-title');
+  const heroDesc = document.getElementById('lock-hero-desc');
+  const heroBtnIcon = document.getElementById('btn-hero-icon');
+  const heroBtnText = document.getElementById('btn-hero-text');
+  const heroBtn = document.getElementById('btn-toggle-lock-hero');
+
+  if (heroTitle) {
+    if (locked) {
+      if (heroIcon) heroIcon.textContent = '🔒';
+      heroTitle.textContent = 'Оверлей зафиксирован («Клик-сквозь» в игру активен)';
+      if (heroDesc) heroDesc.textContent = 'Оверлей закреплен на экране. Клики мыши проходят прямо в игру. Чтобы переместить оверлей в другое место, нажмите кнопку ниже.';
+      if (heroBtnIcon) heroBtnIcon.textContent = '🔓';
+      if (heroBtnText) heroBtnText.textContent = 'Разблокировать оверлей для перемещения';
+      if (heroBtn) {
+        heroBtn.style.background = 'linear-gradient(135deg, #238636, #2ea043)';
+        heroBtn.style.borderColor = '#3fb950';
+        heroBtn.style.boxShadow = '0 4px 14px rgba(46, 160, 67, 0.35)';
+      }
+    } else {
+      if (heroIcon) heroIcon.textContent = '🔓';
+      heroTitle.textContent = 'Оверлей разблокирован — можно перетаскивать мышкой';
+      if (heroDesc) heroDesc.textContent = 'Зажмите левую кнопку мыши на полупрозрачной рамке оверлея на экране и перетащите в удобное место. Затем нажмите кнопку фиксации, чтобы закрепить.';
+      if (heroBtnIcon) heroBtnIcon.textContent = '🔒';
+      if (heroBtnText) heroBtnText.textContent = 'Зафиксировать оверлей на этом месте';
+      if (heroBtn) {
+        heroBtn.style.background = 'linear-gradient(135deg, #f25c05, #ff7b29)';
+        heroBtn.style.borderColor = '#f25c05';
+        heroBtn.style.boxShadow = '0 4px 14px rgba(242, 92, 5, 0.35)';
+      }
+    }
+  }
+
+  // 3. Tab 3 Checkbox
+  const chk = document.getElementById('chk-click-through');
+  if (chk) chk.checked = locked;
+
+  if (notifyBackend) {
+    sendIPC('set_click_through', { locked: locked });
+  }
+}
+
+window.onOverlayLockChanged = function(locked) {
+  updateLockUI(locked, false);
+};
+
+// --- Overlay Controls & Presets ---
+function initOverlayControls() {
+  const toggleHandler = () => {
+    updateLockUI(!isOverlayLocked, true);
+  };
+
+  const headerBtn = document.getElementById('btn-header-lock') || document.getElementById('badge-lock');
+  if (headerBtn) headerBtn.addEventListener('click', toggleHandler);
+
+  const heroBtn = document.getElementById('btn-toggle-lock-hero');
+  if (heroBtn) heroBtn.addEventListener('click', toggleHandler);
 
   const chkClickThrough = document.getElementById('chk-click-through');
   if (chkClickThrough) {
     chkClickThrough.addEventListener('change', (e) => {
-      isLocked = e.target.checked;
-      updateLockUI(isLocked);
+      updateLockUI(e.target.checked, true);
     });
-  }
-
-  function updateLockUI(locked) {
-    if (badgeLock) {
-      if (locked) {
-        badgeLock.textContent = '🔒 Клик-сквозь: Вкл';
-        badgeLock.style.color = '#3fb950';
-        badgeLock.style.borderColor = 'rgba(63, 185, 80, 0.4)';
-      } else {
-        badgeLock.textContent = '🔓 Оверлей: Подвижен';
-        badgeLock.style.color = '#f25c05';
-        badgeLock.style.borderColor = 'rgba(242, 92, 5, 0.4)';
-      }
-    }
-    sendIPC('set_click_through', { locked: locked });
   }
 
   // Presets
@@ -544,19 +604,8 @@ window.initFromConfig = function(cfg) {
   setChk('chk-ocr-enabled', cfg.ocr_enabled);
   setChk('chk-click-through', cfg.overlay_locked);
 
-  // Lock UI badge
-  const badgeLock = document.getElementById('badge-lock');
-  if (badgeLock && cfg.overlay_locked !== undefined) {
-    if (cfg.overlay_locked) {
-      badgeLock.textContent = '🔒 Клик-сквозь: Вкл';
-      badgeLock.style.color = '#3fb950';
-      badgeLock.style.borderColor = 'rgba(63, 185, 80, 0.4)';
-    } else {
-      badgeLock.textContent = '🔓 Оверлей: Подвижен';
-      badgeLock.style.color = '#f25c05';
-      badgeLock.style.borderColor = 'rgba(242, 92, 5, 0.4)';
-    }
-  }
+  // Lock UI state
+  updateLockUI(!!cfg.overlay_locked, false);
 
   // Voice Select
   if (cfg.voice) {

@@ -122,6 +122,113 @@ body {
   color: #fff;
 }
 
+/* Header Lock Button */
+.btn-overlay-lock {
+  border: 1px solid rgba(242, 92, 5, 0.6);
+  background: rgba(242, 92, 5, 0.15);
+  color: #f25c05;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  padding: 4px 12px;
+  border-radius: 20px;
+  transition: all 0.2s ease;
+}
+
+.btn-overlay-lock:hover {
+  background: rgba(242, 92, 5, 0.3);
+  color: #fff;
+  box-shadow: 0 0 12px rgba(242, 92, 5, 0.4);
+}
+
+.btn-overlay-lock.locked {
+  border-color: rgba(63, 185, 80, 0.6);
+  background: rgba(63, 185, 80, 0.15);
+  color: #3fb950;
+}
+
+.btn-overlay-lock.locked:hover {
+  background: rgba(63, 185, 80, 0.3);
+  color: #fff;
+  box-shadow: 0 0 12px rgba(63, 185, 80, 0.4);
+}
+
+/* Lock Hero Card in Tab 3 */
+.lock-hero-card {
+  background: linear-gradient(135deg, rgba(24, 28, 40, 0.95), rgba(16, 20, 30, 0.98));
+  border: 1.5px solid rgba(242, 92, 5, 0.4) !important;
+  border-radius: var(--radius-md);
+  padding: 16px;
+  margin-bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.lock-hero-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.lock-hero-icon {
+  font-size: 26px;
+  line-height: 1;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.lock-hero-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.lock-hero-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.lock-hero-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.btn-toggle-lock-hero {
+  width: 100%;
+  padding: 11px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: linear-gradient(135deg, #f25c05, #ff7b29);
+  border: 1px solid #f25c05;
+  color: #ffffff;
+  box-shadow: 0 4px 14px rgba(242, 92, 5, 0.35);
+  transition: all 0.2s ease;
+  font-family: inherit;
+}
+
+.btn-toggle-lock-hero:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(242, 92, 5, 0.5);
+  filter: brightness(1.1);
+}
+
 /* Window Controls */
 .window-controls {
   display: flex;
