@@ -104,6 +104,29 @@ const slidersDef = [
       }
       return val === 0 ? '0 px (Без рамки)' : `${val} px`;
     }
+  },
+  {
+    id: 'range-overlay-width',
+    valId: 'val-overlay-width',
+    format: (v) => {
+      const preview = document.getElementById('hud-preview-box');
+      if (preview) {
+        const pct = Math.min(100, Math.max(55, Math.round((v / 660) * 100)));
+        preview.style.width = `${pct}%`;
+      }
+      return `${v} px`;
+    }
+  },
+  {
+    id: 'range-overlay-height',
+    valId: 'val-overlay-height',
+    format: (v) => {
+      const preview = document.getElementById('hud-preview-box');
+      if (preview) {
+        preview.style.minHeight = `${Math.round(v * 0.8)}px`;
+      }
+      return `${v} px`;
+    }
   }
 ];
 
@@ -628,7 +651,9 @@ window.initFromConfig = function(cfg) {
     'range-ocr-duration': cfg.ocr_display_duration ?? 12,
     'range-overlay-font': cfg.overlay_font_size ?? 12,
     'range-overlay-alpha': Math.round((cfg.overlay_alpha ?? 0.92) * 100),
-    'range-overlay-border-w': cfg.overlay_border_width ?? 2
+    'range-overlay-border-w': cfg.overlay_border_width ?? 2,
+    'range-overlay-width': cfg.overlay_w ?? 660,
+    'range-overlay-height': cfg.overlay_h ?? 95
   };
 
   slidersDef.forEach(s => {

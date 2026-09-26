@@ -30,6 +30,10 @@ pub enum AppEvent {
         border_width: u32,
         text_color: String,
     },
+    ResizeHud {
+        width: u32,
+        height: u32,
+    },
     SetHudPreset(String),
     SetHudLocked(bool),
 }

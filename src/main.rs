@@ -628,7 +628,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_decorations(false)
         .with_transparent(true)
         .with_always_on_top(true)
-        .with_inner_size(tao::dpi::LogicalSize::new(hud_w.max(500.0), hud_h.max(90.0)))
+        .with_inner_size(tao::dpi::LogicalSize::new(hud_w.max(300.0), hud_h.max(50.0)))
+        .with_min_inner_size(tao::dpi::LogicalSize::new(300.0, 50.0))
         .with_position(tao::dpi::LogicalPosition::new(init_hud_x as f64, init_hud_y as f64));
 
     #[cfg(windows)]
@@ -799,6 +800,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             border_color: cfg.overlay_border_color.clone(),
                                             border_width: cfg.overlay_border_width,
                                             text_color: cfg.overlay_text_color.clone(),
+                                        }).ok();
+                                    }
+                                    "range-overlay-width" => {
+                                        cfg.overlay_w = val_num as u32;
+                                        proxy_ipc.send_event(AppEvent::ResizeHud {
+                                            width: cfg.overlay_w,
+                                            height: cfg.overlay_h,
+                                        }).ok();
+                                    }
+                                    "range-overlay-height" => {
+                                        cfg.overlay_h = val_num as u32;
+                                        proxy_ipc.send_event(AppEvent::ResizeHud {
+                                            width: cfg.overlay_w,
+                                            height: cfg.overlay_h,
                                         }).ok();
                                     }
                                     _ => {}
@@ -1120,6 +1135,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     );
                     let _ = hud_webview.evaluate_script(&hud_init);
                     let _ = hud_window.set_ignore_cursor_events(cfg.overlay_locked);
+
+                    // Ensure window size from config is applied
+                    let w = (cfg.overlay_w as f64).max(300.0);
+                    let h = (cfg.overlay_h as f64).max(50.0);
+                    hud_window.set_inner_size(tao::dpi::LogicalSize::new(w, h));
+
+                    // Safety clamp overlay position to visible screen bounds
+                    let monitor = hud_window.current_monitor().or_else(|| hud_window.primary_monitor());
+                    if let Some(m) = monitor {
+                        let scale = m.scale_factor();
+                        let pos = m.position().to_logical::<f64>(scale);
+                        let size = m.size().to_logical::<f64>(scale);
+                        let cur_x = cfg.overlay_x as f64;
+                        let cur_y = cfg.overlay_y as f64;
+                        let clamped_x = cur_x.max(pos.x).min(pos.x + size.width - 100.0);
+                        let clamped_y = cur_y.max(pos.y).min(pos.y + size.height - 50.0);
+                        if (clamped_x - cur_x).abs() > 1.0 || (clamped_y - cur_y).abs() > 1.0 {
+                            hud_window.set_outer_position(tao::dpi::LogicalPosition::new(clamped_x, clamped_y));
+                            hud_pos_x.store(clamped_x.round() as i32, Ordering::Relaxed);
+                            hud_pos_y.store(clamped_y.round() as i32, Ordering::Relaxed);
+                        }
+                    }
                 }
                 AppEvent::AudioDevices(json_str) => {
                     let script = format!("window.setAudioDevices({});", json_str);
@@ -1179,19 +1216,47 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     );
                     let _ = hud_webview.evaluate_script(&script);
                 }
+                AppEvent::ResizeHud { width, height } => {
+                    let w = (width as f64).max(300.0);
+                    let h = (height as f64).max(50.0);
+                    hud_window.set_inner_size(tao::dpi::LogicalSize::new(w, h));
+                }
                 AppEvent::SetHudPreset(preset) => {
-                    let (px, py) = match preset.as_str() {
-                        "top_center" => ((scr_w - hud_w) / 2.0, 40.0),
-                        "top_right" => (scr_w - hud_w - 40.0, 40.0),
-                        "bottom_right" => (scr_w - hud_w - 40.0, scr_h - hud_h - 60.0),
-                        _ => ((scr_w - hud_w) / 2.0, scr_h - hud_h - 60.0), // bottom_center
+                    let monitor = hud_window
+                        .current_monitor()
+                        .or_else(|| hud_window.primary_monitor());
+
+                    let (mon_x, mon_y, mon_w, mon_h) = if let Some(m) = monitor {
+                        let scale = m.scale_factor();
+                        let pos = m.position().to_logical::<f64>(scale);
+                        let size = m.size().to_logical::<f64>(scale);
+                        (pos.x, pos.y, size.width, size.height)
+                    } else {
+                        (0.0, 0.0, 1920.0, 1080.0)
                     };
+
+                    let scale = hud_window.scale_factor();
+                    let cur_sz = hud_window.inner_size().to_logical::<f64>(scale);
+                    let w = cur_sz.width.max(200.0);
+                    let h = cur_sz.height.max(50.0);
+
+                    let margin = 30.0;
+                    let (rel_x, rel_y) = match preset.as_str() {
+                        "top_center" => ((mon_w - w) / 2.0, margin),
+                        "top_right" => (mon_w - w - margin, margin),
+                        "bottom_right" => (mon_w - w - margin, mon_h - h - margin - 20.0),
+                        _ => ((mon_w - w) / 2.0, mon_h - h - margin - 20.0), // bottom_center
+                    };
+
+                    let px = mon_x + rel_x;
+                    let py = mon_y + rel_y;
+
                     hud_window.set_outer_position(tao::dpi::LogicalPosition::new(px, py));
-                    hud_pos_x.store(px as i32, Ordering::Relaxed);
-                    hud_pos_y.store(py as i32, Ordering::Relaxed);
+                    hud_pos_x.store(px.round() as i32, Ordering::Relaxed);
+                    hud_pos_y.store(py.round() as i32, Ordering::Relaxed);
                     let mut cfg = config.lock();
-                    cfg.overlay_x = px as i32;
-                    cfg.overlay_y = py as i32;
+                    cfg.overlay_x = px.round() as i32;
+                    cfg.overlay_y = py.round() as i32;
                     cfg.overlay_preset = preset;
                     let _ = cfg.save(&config_path);
                 }
