@@ -19,7 +19,7 @@
   "ocr_display_duration": 12,
   "overlay_preset": "top_center",
   "overlay_font_size": 12,
-  "overlay_alpha": 0.90,
+  "overlay_alpha": 0.9,
   "overlay_border_color": "#f25c05",
   "overlay_border_width": 2,
   "overlay_locked": false,

@@ -449,6 +449,73 @@ const HUD_HTML: &str = r#"<!DOCTYPE html>
 </body>
 </html>"#;
 
+#[cfg(windows)]
+mod win_composition {
+    use std::ffi::c_void;
+
+    #[repr(C)]
+    #[allow(dead_code)]
+    pub enum AccentState {
+        AccentDisabled = 0,
+        AccentEnableGradient = 1,
+        AccentEnableTransparentGradient = 2,
+        AccentEnableBlurbehind = 3,
+        AccentEnableAcrylicBlurbehind = 4,
+        AccentInvalidState = 5,
+    }
+
+    #[repr(C)]
+    pub struct AccentPolicy {
+        pub accent_state: AccentState,
+        pub accent_flags: u32,
+        pub gradient_color: u32,
+        pub animation_id: u32,
+    }
+
+    #[repr(C)]
+    pub struct WindowCompositionAttributeData {
+        pub attribute: u32,
+        pub data: *mut c_void,
+        pub size_of_data: usize,
+    }
+
+    type SetWindowCompositionAttributeFn = unsafe extern "system" fn(
+        hwnd: isize,
+        data: *const WindowCompositionAttributeData,
+    ) -> i32;
+
+    pub unsafe fn set_transparent(hwnd: isize) {
+        let user32 = windows_sys::Win32::System::LibraryLoader::GetModuleHandleA(b"user32.dll\0".as_ptr());
+        let user32 = if user32.is_null() {
+            windows_sys::Win32::System::LibraryLoader::LoadLibraryA(b"user32.dll\0".as_ptr())
+        } else {
+            user32
+        };
+        if user32.is_null() {
+            return;
+        }
+        let func = windows_sys::Win32::System::LibraryLoader::GetProcAddress(
+            user32,
+            b"SetWindowCompositionAttribute\0".as_ptr(),
+        );
+        if let Some(func) = func {
+            let set_comp: SetWindowCompositionAttributeFn = std::mem::transmute(func);
+            let mut policy = AccentPolicy {
+                accent_state: AccentState::AccentEnableTransparentGradient,
+                accent_flags: 2,
+                gradient_color: 0x00000000,
+                animation_id: 0,
+            };
+            let data = WindowCompositionAttributeData {
+                attribute: 19, // WCA_ACCENT_POLICY
+                data: &mut policy as *mut _ as *mut c_void,
+                size_of_data: std::mem::size_of::<AccentPolicy>(),
+            };
+            set_comp(hwnd, &data);
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(windows)]
     {
@@ -501,13 +568,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(windows)]
     {
-        hud_builder = hud_builder
-            .with_undecorated_shadow(false)
-            .with_no_redirection_bitmap(true);
+        hud_builder = hud_builder.with_undecorated_shadow(false);
     }
 
     let hud_window = hud_builder.build(&event_loop)?;
     let hud_window = Arc::new(hud_window);
+
+    #[cfg(windows)]
+    {
+        use tao::platform::windows::WindowExtWindows;
+        unsafe {
+            win_composition::set_transparent(hud_window.hwnd() as isize);
+        }
+    }
 
     // Floating In-Game Sniper / Area Selection Overlay Window
     let (scr_x, scr_y, scr_w, scr_h) = {
@@ -539,14 +612,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(windows)]
     {
-        sniper_builder = sniper_builder
-            .with_undecorated_shadow(false)
-            .with_no_redirection_bitmap(true);
+        sniper_builder = sniper_builder.with_undecorated_shadow(false);
     }
 
     let sniper_window = sniper_builder.build(&event_loop)?;
     let sniper_window = Arc::new(sniper_window);
     let sniper_win_ipc = sniper_window.clone();
+
+    #[cfg(windows)]
+    {
+        use tao::platform::windows::WindowExtWindows;
+        unsafe {
+            win_composition::set_transparent(sniper_window.hwnd() as isize);
+        }
+    }
 
     // 3. Assemble embedded HTML with inlined CSS and JS
     let icon_b64 = ocr::fast_base64_encode(APP_ICON_PNG);
@@ -790,20 +869,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config_hud = config.clone();
     let config_path_hud = config_path.clone();
 
-    #[cfg(windows)]
-    use wry::WebViewBuilderExtWindows;
-
-    #[allow(unused_mut)]
-    let mut hud_wv_builder = WebViewBuilder::new()
+    let hud_webview = WebViewBuilder::new()
         .with_transparent(true)
-        .with_html(HUD_HTML);
-
-    #[cfg(windows)]
-    {
-        hud_wv_builder = hud_wv_builder.with_additional_browser_args("--enable-features=RemoveRedirectionBitmap");
-    }
-
-    let hud_webview = hud_wv_builder
+        .with_html(HUD_HTML)
         .with_ipc_handler(move |req| {
             let body = req.body();
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(body) {
@@ -850,20 +918,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .build(&*hud_window)?;
 
+    #[cfg(windows)]
+    {
+        use tao::platform::windows::WindowExtWindows;
+        unsafe {
+            win_composition::set_transparent(hud_window.hwnd() as isize);
+        }
+        let cur_sz = hud_window.inner_size();
+        hud_window.set_inner_size(tao::dpi::PhysicalSize::new(cur_sz.width + 1, cur_sz.height));
+        hud_window.set_inner_size(cur_sz);
+    }
+
     // 8. Sniper / Screen Selection Webview
     let proxy_sniper = proxy.clone();
 
-    #[allow(unused_mut)]
-    let mut sniper_wv_builder = WebViewBuilder::new()
+    let sniper_webview = WebViewBuilder::new()
         .with_transparent(true)
-        .with_html(SNIPER_HTML);
-
-    #[cfg(windows)]
-    {
-        sniper_wv_builder = sniper_wv_builder.with_additional_browser_args("--enable-features=RemoveRedirectionBitmap");
-    }
-
-    let sniper_webview = sniper_wv_builder
+        .with_html(SNIPER_HTML)
         .with_ipc_handler(move |req| {
             let body = req.body();
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(body) {
@@ -928,6 +999,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         })
         .build(&*sniper_window)?;
+
+    #[cfg(windows)]
+    {
+        use tao::platform::windows::WindowExtWindows;
+        unsafe {
+            win_composition::set_transparent(sniper_window.hwnd() as isize);
+        }
+    }
 
     // 9. Run Main Tao Event Loop
     event_loop.run(move |event, _, control_flow| {
@@ -1028,6 +1107,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 AppEvent::OpenSniper => {
                     sniper_window.set_visible(true);
                     sniper_window.set_focus();
+                    #[cfg(windows)]
+                    {
+                        use tao::platform::windows::WindowExtWindows;
+                        unsafe {
+                            win_composition::set_transparent(sniper_window.hwnd() as isize);
+                        }
+                    }
                     let _ = sniper_webview.evaluate_script("window.initSniper();");
                 }
             },
