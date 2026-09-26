@@ -580,6 +580,9 @@ mod win_composition {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Warm up translation engine token in background immediately
+    translator::warm_up_connection();
+
     #[cfg(windows)]
     {
         std::env::set_var("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "0");

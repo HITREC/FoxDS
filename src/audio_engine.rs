@@ -681,7 +681,16 @@ impl AudioEngine {
                             }
                         }
                     }
-                    Err(e) => eprintln!("[Incoming Translate] Error: {}", e),
+                    Err(e) => {
+                        eprintln!("[Incoming Translate] Error: {}", e);
+                        if incoming_enabled {
+                            let _ = proxy.send_event(AppEvent::SpeechEvent(
+                                "incoming".to_string(),
+                                formatted_en.display_text.clone(),
+                                "[Ошибка сети перевода]".to_string(),
+                            ));
+                        }
+                    }
                 }
             }
             Err(_) => {
