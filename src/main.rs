@@ -451,8 +451,11 @@ const HUD_HTML: &str = r#"<!DOCTYPE html>
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(windows)]
-    unsafe {
-        windows_sys::Win32::UI::WindowsAndMessaging::SetProcessDPIAware();
+    {
+        std::env::set_var("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "0");
+        unsafe {
+            windows_sys::Win32::UI::WindowsAndMessaging::SetProcessDPIAware();
+        }
     }
 
     // 1. Load configuration
@@ -483,16 +486,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         (cfg.overlay_x as f64, cfg.overlay_y as f64, cfg.overlay_w as f64, cfg.overlay_h as f64)
     };
 
-    let hud_window = WindowBuilder::new()
+    #[cfg(windows)]
+    use tao::platform::windows::WindowBuilderExtWindows;
+
+    #[allow(unused_mut)]
+    let mut hud_builder = WindowBuilder::new()
         .with_title("FoxDS Tactical Subtitle HUD")
         .with_window_icon(app_icon.clone())
         .with_decorations(false)
         .with_transparent(true)
         .with_always_on_top(true)
         .with_inner_size(tao::dpi::LogicalSize::new(hud_w.max(500.0), hud_h.max(90.0)))
-        .with_position(tao::dpi::LogicalPosition::new(hud_pos_x, hud_pos_y))
-        .build(&event_loop)?;
+        .with_position(tao::dpi::LogicalPosition::new(hud_pos_x, hud_pos_y));
 
+    #[cfg(windows)]
+    {
+        hud_builder = hud_builder
+            .with_undecorated_shadow(false)
+            .with_no_redirection_bitmap(true);
+    }
+
+    let hud_window = hud_builder.build(&event_loop)?;
     let hud_window = Arc::new(hud_window);
 
     // Floating In-Game Sniper / Area Selection Overlay Window
@@ -513,16 +527,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         (0.0, 0.0, 1920.0, 1080.0)
     };
 
-    let sniper_window = WindowBuilder::new()
+    #[allow(unused_mut)]
+    let mut sniper_builder = WindowBuilder::new()
         .with_title("FoxDS Tactical Sniper")
         .with_decorations(false)
         .with_transparent(true)
         .with_always_on_top(true)
         .with_visible(false)
         .with_inner_size(tao::dpi::LogicalSize::new(scr_w, scr_h))
-        .with_position(tao::dpi::LogicalPosition::new(scr_x, scr_y))
-        .build(&event_loop)?;
+        .with_position(tao::dpi::LogicalPosition::new(scr_x, scr_y));
 
+    #[cfg(windows)]
+    {
+        sniper_builder = sniper_builder
+            .with_undecorated_shadow(false)
+            .with_no_redirection_bitmap(true);
+    }
+
+    let sniper_window = sniper_builder.build(&event_loop)?;
     let sniper_window = Arc::new(sniper_window);
     let sniper_win_ipc = sniper_window.clone();
 
@@ -742,6 +764,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let _ = cfg.save(&config_path_clone);
                             }
                         }
+                        "save_overlay_settings" => {
+                            let cfg = config_clone.lock();
+                            let _ = cfg.save(&config_path_clone);
+                            proxy_ipc.send_event(AppEvent::UpdateHudStyle {
+                                font_size: cfg.overlay_font_size,
+                                alpha: cfg.overlay_alpha,
+                                border_color: cfg.overlay_border_color.clone(),
+                                border_width: cfg.overlay_border_width,
+                            }).ok();
+                        }
                         "trigger_ocr" | "test_ocr" => {
                             proxy_ipc.send_event(AppEvent::OpenSniper).ok();
                         }
@@ -758,9 +790,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config_hud = config.clone();
     let config_path_hud = config_path.clone();
 
-    let hud_webview = WebViewBuilder::new()
+    #[cfg(windows)]
+    use wry::WebViewBuilderExtWindows;
+
+    #[allow(unused_mut)]
+    let mut hud_wv_builder = WebViewBuilder::new()
         .with_transparent(true)
-        .with_html(HUD_HTML)
+        .with_html(HUD_HTML);
+
+    #[cfg(windows)]
+    {
+        hud_wv_builder = hud_wv_builder.with_additional_browser_args("--enable-features=RemoveRedirectionBitmap");
+    }
+
+    let hud_webview = hud_wv_builder
         .with_ipc_handler(move |req| {
             let body = req.body();
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(body) {
@@ -809,9 +852,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 8. Sniper / Screen Selection Webview
     let proxy_sniper = proxy.clone();
-    let sniper_webview = WebViewBuilder::new()
+
+    #[allow(unused_mut)]
+    let mut sniper_wv_builder = WebViewBuilder::new()
         .with_transparent(true)
-        .with_html(SNIPER_HTML)
+        .with_html(SNIPER_HTML);
+
+    #[cfg(windows)]
+    {
+        sniper_wv_builder = sniper_wv_builder.with_additional_browser_args("--enable-features=RemoveRedirectionBitmap");
+    }
+
+    let sniper_webview = sniper_wv_builder
         .with_ipc_handler(move |req| {
             let body = req.body();
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(body) {
