@@ -5,6 +5,7 @@ mod audio_engine;
 mod audio_player;
 mod config;
 mod hotkeys;
+mod ocr;
 mod stt;
 mod system_stats;
 mod translator;
@@ -25,6 +26,233 @@ use wry::WebViewBuilder;
 const HTML_INDEX: &str = include_str!("../ui/index.html");
 const CSS_STYLE: &str = include_str!("../ui/style.css");
 const JS_APP: &str = include_str!("../ui/app.js");
+
+const ICON_RGBA: &[u8] = include_bytes!("../ui/icon_64.rgba");
+const APP_ICON_PNG: &[u8] = include_bytes!("../ui/app_icon.png");
+
+fn load_app_icon() -> Option<tao::window::Icon> {
+    tao::window::Icon::from_rgba(ICON_RGBA.to_vec(), 64, 64).ok()
+}
+
+const SNIPER_HTML: &str = r#"<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+  html, body {
+    width: 100vw; height: 100vh;
+    background: transparent;
+    overflow: hidden;
+    cursor: crosshair;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  }
+  #sniper-canvas {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100vw; height: 100vh;
+    display: block;
+    cursor: crosshair;
+  }
+  .sniper-banner {
+    position: fixed;
+    top: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(14, 18, 26, 0.95);
+    border: 1.5px solid #00f2fe;
+    border-radius: 30px;
+    padding: 8px 24px;
+    color: #ffffff;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.85), 0 0 20px rgba(0, 242, 254, 0.4);
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    z-index: 99999;
+  }
+  .sniper-tag {
+    background: #f25c05;
+    color: #fff;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 800;
+  }
+  #selection-label {
+    position: absolute;
+    background: #00f2fe;
+    color: #0b0f19;
+    font-size: 11px;
+    font-weight: 800;
+    padding: 3px 8px;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    pointer-events: none;
+    display: none;
+    z-index: 100000;
+    white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+  <canvas id="sniper-canvas"></canvas>
+  <div class="sniper-banner">
+    <span class="sniper-tag">FOXDS SNIPER</span>
+    <span>✂️ Выделите рамкой область с текстом для перевода | [ESC] или Правый клик — Отмена</span>
+  </div>
+  <div id="selection-label">0 × 0 px</div>
+  <script>
+    const canvas = document.getElementById('sniper-canvas');
+    const ctx = canvas.getContext('2d');
+    const label = document.getElementById('selection-label');
+    let bgImage = null;
+    let isDrawing = false;
+    let startX = 0, startY = 0;
+    let curX = 0, curY = 0;
+
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    function renderScene() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (bgImage) {
+        ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height);
+      }
+      // Dim background
+      ctx.fillStyle = 'rgba(10, 15, 26, 0.45)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      if (isDrawing) {
+        const sx = Math.min(startX, curX);
+        const sy = Math.min(startY, curY);
+        const sw = Math.abs(curX - startX);
+        const sh = Math.abs(curY - startY);
+
+        if (sw > 0 && sh > 0 && bgImage) {
+          // Draw un-dimmed cutout from snapshot
+          ctx.drawImage(bgImage, sx, sy, sw, sh, sx, sy, sw, sh);
+
+          // Draw neon border with dash
+          ctx.save();
+          ctx.strokeStyle = '#00f2fe';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([6, 4]);
+          ctx.shadowColor = '#00f2fe';
+          ctx.shadowBlur = 8;
+          ctx.strokeRect(sx, sy, sw, sh);
+          ctx.restore();
+
+          // Corner accent notches
+          const cs = Math.min(10, Math.min(sw, sh) / 2);
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          // Top-left
+          ctx.moveTo(sx, sy + cs); ctx.lineTo(sx, sy); ctx.lineTo(sx + cs, sy);
+          // Top-right
+          ctx.moveTo(sx + sw - cs, sy); ctx.lineTo(sx + sw, sy); ctx.lineTo(sx + sw, sy + cs);
+          // Bottom-left
+          ctx.moveTo(sx, sy + sh - cs); ctx.lineTo(sx, sy + sh); ctx.lineTo(sx + cs, sy + sh);
+          // Bottom-right
+          ctx.moveTo(sx + sw - cs, sy + sh); ctx.lineTo(sx + sw, sy + sh); ctx.lineTo(sx + sw, sy + sh - cs);
+          ctx.stroke();
+
+          // Update label position
+          label.style.display = 'block';
+          label.style.left = (sx + sw - 80) + 'px';
+          label.style.top = (sy + sh + 8) + 'px';
+          label.innerText = Math.round(sw) + ' × ' + Math.round(sh) + ' px';
+        }
+      } else {
+        label.style.display = 'none';
+      }
+    }
+
+    window.startSniperWithImage = function(dataUrl) {
+      isDrawing = false;
+      resizeCanvas();
+      label.style.display = 'none';
+      const img = new Image();
+      img.onload = function() {
+        bgImage = img;
+        renderScene();
+      };
+      img.src = dataUrl;
+    };
+
+    window.addEventListener('mousedown', function(e) {
+      if (e.button === 2) {
+        cancelSnip();
+        return;
+      }
+      if (e.button === 0) {
+        isDrawing = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        curX = e.clientX;
+        curY = e.clientY;
+        renderScene();
+      }
+    });
+
+    window.addEventListener('mousemove', function(e) {
+      if (!isDrawing) return;
+      curX = e.clientX;
+      curY = e.clientY;
+      renderScene();
+    });
+
+    window.addEventListener('mouseup', function(e) {
+      if (!isDrawing) return;
+      isDrawing = false;
+      const sx = Math.min(startX, curX);
+      const sy = Math.min(startY, curY);
+      const sw = Math.abs(curX - startX);
+      const sh = Math.abs(curY - startY);
+      label.style.display = 'none';
+
+      if (sw > 15 && sh > 15) {
+        if (window.ipc) {
+          window.ipc.postMessage(JSON.stringify({
+            cmd: 'snip_complete',
+            x: Math.round(sx),
+            y: Math.round(sy),
+            w: Math.round(sw),
+            h: Math.round(sh)
+          }));
+        }
+      } else {
+        cancelSnip();
+      }
+    });
+
+    window.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') cancelSnip();
+    });
+
+    window.addEventListener('contextmenu', function(e) {
+      e.preventDefault();
+      cancelSnip();
+    });
+
+    function cancelSnip() {
+      isDrawing = false;
+      label.style.display = 'none';
+      if (window.ipc) {
+        window.ipc.postMessage(JSON.stringify({ cmd: 'snip_cancel' }));
+      }
+    }
+  </script>
+</body>
+</html>"#;
 
 const HUD_HTML: &str = r#"<!DOCTYPE html>
 <html lang="ru">
@@ -49,6 +277,7 @@ const HUD_HTML: &str = r#"<!DOCTYPE html>
     justify-content: center;
     box-shadow: 0 10px 30px rgba(0,0,0,0.7), 0 0 16px rgba(242, 92, 5, 0.35);
     cursor: move;
+    transition: background-color 0.15s ease, border-color 0.15s ease, border-width 0.15s ease, box-shadow 0.15s ease;
   }
   .hud-header {
     display: flex;
@@ -67,6 +296,7 @@ const HUD_HTML: &str = r#"<!DOCTYPE html>
     letter-spacing: 0.8px;
     text-transform: uppercase;
     color: #f25c05;
+    transition: color 0.15s ease;
   }
   .hud-trans {
     font-size: 15px;
@@ -75,6 +305,7 @@ const HUD_HTML: &str = r#"<!DOCTYPE html>
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    transition: font-size 0.15s ease;
   }
   .hud-orig {
     font-size: 12px;
@@ -83,6 +314,7 @@ const HUD_HTML: &str = r#"<!DOCTYPE html>
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    transition: font-size 0.15s ease;
   }
 </style>
 </head>
@@ -106,6 +338,33 @@ const HUD_HTML: &str = r#"<!DOCTYPE html>
         document.getElementById('dot').style.boxShadow = '0 0 8px ' + color;
       }
     };
+
+    window.applyOverlayStyle = function(fontSize, alpha, borderColor, borderWidth) {
+      const hud = document.getElementById('hud');
+      if (!hud) return;
+      if (fontSize) {
+        document.getElementById('trans').style.fontSize = fontSize + 'px';
+        document.getElementById('orig').style.fontSize = Math.max(10, fontSize - 3) + 'px';
+      }
+      if (alpha !== undefined && alpha !== null) {
+        hud.style.backgroundColor = 'rgba(14, 18, 26, ' + alpha + ')';
+      }
+      if (borderColor) {
+        hud.style.borderColor = borderColor;
+        hud.style.boxShadow = '0 10px 30px rgba(0,0,0,0.7), 0 0 16px ' + borderColor + '55';
+        const dot = document.getElementById('dot');
+        if (dot) {
+          dot.style.background = borderColor;
+          dot.style.boxShadow = '0 0 8px ' + borderColor;
+        }
+        const badge = document.getElementById('badge');
+        if (badge) badge.style.color = borderColor;
+      }
+      if (borderWidth) {
+        hud.style.borderWidth = borderWidth + 'px';
+      }
+    };
+
     document.getElementById('hud').addEventListener('mousedown', function(e) {
       if (window.ipc) { window.ipc.postMessage('drag_hud'); }
     });
@@ -123,8 +382,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let proxy = event_loop.create_proxy();
 
     // Main Control Panel Window
+    let app_icon = load_app_icon();
+
     let window = WindowBuilder::new()
         .with_title("FoxDS Voice Translator Pro")
+        .with_window_icon(app_icon.clone())
         .with_decorations(false)
         .with_inner_size(tao::dpi::LogicalSize::new(1200.0, 780.0))
         .with_min_inner_size(tao::dpi::LogicalSize::new(1000.0, 680.0))
@@ -141,6 +403,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let hud_window = WindowBuilder::new()
         .with_title("FoxDS Tactical Subtitle HUD")
+        .with_window_icon(app_icon.clone())
         .with_decorations(false)
         .with_transparent(true)
         .with_always_on_top(true)
@@ -151,7 +414,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let hud_window = Arc::new(hud_window);
     let hud_win_drag = hud_window.clone();
 
+    // Floating In-Game Sniper / Area Selection Overlay Window
+    let (scr_x, scr_y, scr_w, scr_h) = {
+        #[cfg(windows)]
+        unsafe {
+            let vx = windows_sys::Win32::UI::WindowsAndMessaging::GetSystemMetrics(windows_sys::Win32::UI::WindowsAndMessaging::SM_XVIRTUALSCREEN) as f64;
+            let vy = windows_sys::Win32::UI::WindowsAndMessaging::GetSystemMetrics(windows_sys::Win32::UI::WindowsAndMessaging::SM_YVIRTUALSCREEN) as f64;
+            let vw = windows_sys::Win32::UI::WindowsAndMessaging::GetSystemMetrics(windows_sys::Win32::UI::WindowsAndMessaging::SM_CXVIRTUALSCREEN) as f64;
+            let vh = windows_sys::Win32::UI::WindowsAndMessaging::GetSystemMetrics(windows_sys::Win32::UI::WindowsAndMessaging::SM_CYVIRTUALSCREEN) as f64;
+            if vw > 100.0 && vh > 100.0 {
+                (vx, vy, vw, vh)
+            } else {
+                (0.0, 0.0, 1920.0, 1080.0)
+            }
+        }
+        #[cfg(not(windows))]
+        (0.0, 0.0, 1920.0, 1080.0)
+    };
+
+    let sniper_window = WindowBuilder::new()
+        .with_title("FoxDS Tactical Sniper")
+        .with_decorations(false)
+        .with_transparent(true)
+        .with_always_on_top(true)
+        .with_visible(false)
+        .with_inner_size(tao::dpi::LogicalSize::new(scr_w, scr_h))
+        .with_position(tao::dpi::LogicalPosition::new(scr_x, scr_y))
+        .build(&event_loop)?;
+
+    let sniper_window = Arc::new(sniper_window);
+    let sniper_win_ipc = sniper_window.clone();
+
     // 3. Assemble embedded HTML with inlined CSS and JS
+    let icon_b64 = ocr::fast_base64_encode(APP_ICON_PNG);
     let full_html = HTML_INDEX
         .replace(
             "<link rel=\"stylesheet\" href=\"style.css\">",
@@ -160,6 +455,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .replace(
             "<script src=\"app.js\"></script>",
             &format!("<script>{}</script>", JS_APP),
+        )
+        .replace(
+            "app_icon.png",
+            &format!("data:image/png;base64,{}", icon_b64),
         );
 
     // 4. Start Pure Rust Audio Engine (Mic capture, PTT F4, RMS VU-meter, STT, Translation, TTS)
@@ -225,9 +524,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     "range-ai-confidence" => cfg.min_confidence = (val_num / 100.0) as f32,
                                     "range-ocr-delay" => cfg.ocr_appear_delay = (val_num / 10.0) as f32,
                                     "range-ocr-duration" => cfg.ocr_display_duration = val_num as u32,
-                                    "range-overlay-font" => cfg.overlay_font_size = val_num as u32,
-                                    "range-overlay-alpha" => cfg.overlay_alpha = (val_num / 100.0) as f32,
-                                    "range-overlay-border-w" => cfg.overlay_border_width = val_num as u32,
+                                    "range-overlay-font" => {
+                                        cfg.overlay_font_size = val_num as u32;
+                                        proxy_ipc.send_event(AppEvent::UpdateHudStyle {
+                                            font_size: cfg.overlay_font_size,
+                                            alpha: cfg.overlay_alpha,
+                                            border_color: cfg.overlay_border_color.clone(),
+                                            border_width: cfg.overlay_border_width,
+                                        }).ok();
+                                    }
+                                    "range-overlay-alpha" => {
+                                        cfg.overlay_alpha = (val_num / 100.0) as f32;
+                                        proxy_ipc.send_event(AppEvent::UpdateHudStyle {
+                                            font_size: cfg.overlay_font_size,
+                                            alpha: cfg.overlay_alpha,
+                                            border_color: cfg.overlay_border_color.clone(),
+                                            border_width: cfg.overlay_border_width,
+                                        }).ok();
+                                    }
+                                    "range-overlay-border-w" => {
+                                        cfg.overlay_border_width = val_num as u32;
+                                        proxy_ipc.send_event(AppEvent::UpdateHudStyle {
+                                            font_size: cfg.overlay_font_size,
+                                            alpha: cfg.overlay_alpha,
+                                            border_color: cfg.overlay_border_color.clone(),
+                                            border_width: cfg.overlay_border_width,
+                                        }).ok();
+                                    }
                                     _ => {}
                                 }
                                 let _ = cfg.save(&config_path_clone);
@@ -301,12 +624,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let mut cfg = config_clone.lock();
                             cfg.overlay_locked = locked;
                             let _ = cfg.save(&config_path_clone);
+                            proxy_ipc.send_event(AppEvent::SetHudLocked(locked)).ok();
                         }
                         "set_overlay_preset" => {
                             if let Some(pos) = val.get("preset").and_then(|v| v.as_str()) {
                                 let mut cfg = config_clone.lock();
                                 cfg.overlay_preset = pos.to_string();
                                 let _ = cfg.save(&config_path_clone);
+                                proxy_ipc.send_event(AppEvent::SetHudPreset(pos.to_string())).ok();
                             }
                         }
                         "set_overlay_color" => {
@@ -314,6 +639,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let mut cfg = config_clone.lock();
                                 cfg.overlay_border_color = col.to_string();
                                 let _ = cfg.save(&config_path_clone);
+                                proxy_ipc.send_event(AppEvent::UpdateHudStyle {
+                                    font_size: cfg.overlay_font_size,
+                                    alpha: cfg.overlay_alpha,
+                                    border_color: col.to_string(),
+                                    border_width: cfg.overlay_border_width,
+                                }).ok();
                             }
                         }
                         "save_voice_hotkey" => {
@@ -329,6 +660,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 cfg.ocr_hotkey = key.to_string();
                                 let _ = cfg.save(&config_path_clone);
                             }
+                        }
+                        "trigger_ocr" | "test_ocr" => {
+                            proxy_ipc.send_event(AppEvent::OpenSniper).ok();
                         }
                         _ => {}
                     }
@@ -348,7 +682,77 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .build(&*hud_window)?;
 
-    // 8. Run Main Tao Event Loop
+    // 8. Sniper / Screen Selection Webview
+    let proxy_sniper = proxy.clone();
+    let sniper_webview = WebViewBuilder::new()
+        .with_transparent(true)
+        .with_html(SNIPER_HTML)
+        .with_ipc_handler(move |req| {
+            let body = req.body();
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(body) {
+                if let Some(cmd) = val.get("cmd").and_then(|v| v.as_str()) {
+                    match cmd {
+                        "snip_cancel" => {
+                            sniper_win_ipc.set_visible(false);
+                            proxy_sniper.send_event(AppEvent::StatusEvent("idle".to_string())).ok();
+                        }
+                        "snip_complete" => {
+                            sniper_win_ipc.set_visible(false);
+                            let rx = val.get("x").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                            let ry = val.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                            let w = val.get("w").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                            let h = val.get("h").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+
+                            let target_x = scr_x as i32 + rx;
+                            let target_y = scr_y as i32 + ry;
+
+                            proxy_sniper.send_event(AppEvent::StatusEvent("ocr_processing".to_string())).ok();
+                            let proxy_worker = proxy_sniper.clone();
+
+                            thread::spawn(move || {
+                                match ocr::capture_screen_rect_bmp(target_x, target_y, w, h) {
+                                    Ok(bmp) => {
+                                        match ocr::recognize_text_from_bmp(&bmp) {
+                                            Ok(recognized) => {
+                                                let clean = recognized.trim();
+                                                if clean.is_empty() {
+                                                    proxy_worker.send_event(AppEvent::StatusEvent("idle".to_string())).ok();
+                                                    return;
+                                                }
+                                                match translator::translate_text(clean, "en", "ru") {
+                                                    Ok(trans) => {
+                                                        proxy_worker.send_event(AppEvent::SpeechEvent(
+                                                            "ocr".to_string(),
+                                                            clean.to_string(),
+                                                            trans.trim().to_string(),
+                                                        )).ok();
+                                                    }
+                                                    Err(e) => eprintln!("[OCR Translate] Error: {}", e),
+                                                }
+                                            }
+                                            Err(e) => {
+                                                eprintln!("[OCR Recognize] Error: {}", e);
+                                                proxy_worker.send_event(AppEvent::SpeechEvent(
+                                                    "ocr".to_string(),
+                                                    "Выделенная область".to_string(),
+                                                    "Текст в рамке не обнаружен".to_string(),
+                                                )).ok();
+                                            }
+                                        }
+                                    }
+                                    Err(e) => eprintln!("[OCR Capture] Error: {}", e),
+                                }
+                                proxy_worker.send_event(AppEvent::StatusEvent("idle".to_string())).ok();
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        })
+        .build(&*sniper_window)?;
+
+    // 9. Run Main Tao Event Loop
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
 
@@ -357,6 +761,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 AppEvent::InitConfig(json_str) => {
                     let script = format!("window.initFromConfig({});", json_str);
                     let _ = webview.evaluate_script(&script);
+
+                    // Apply loaded HUD style to the live subtitle window
+                    let cfg = config.lock();
+                    let hud_init = format!(
+                        "window.applyOverlayStyle({}, {}, '{}', {});",
+                        cfg.overlay_font_size, cfg.overlay_alpha, cfg.overlay_border_color, cfg.overlay_border_width
+                    );
+                    let _ = hud_webview.evaluate_script(&hud_init);
+                    let _ = hud_window.set_ignore_cursor_events(cfg.overlay_locked);
                 }
                 AppEvent::AudioDevices(json_str) => {
                     let script = format!("window.setAudioDevices({});", json_str);
@@ -408,6 +821,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 AppEvent::VuEvent(mic, spk, active) => {
                     let script = format!("window.updateRealVU({}, {}, {});", mic, spk, active);
                     let _ = webview.evaluate_script(&script);
+                }
+                AppEvent::UpdateHudStyle { font_size, alpha, border_color, border_width } => {
+                    let script = format!(
+                        "window.applyOverlayStyle({}, {}, '{}', {});",
+                        font_size, alpha, border_color, border_width
+                    );
+                    let _ = hud_webview.evaluate_script(&script);
+                }
+                AppEvent::SetHudPreset(preset) => {
+                    let (px, py) = match preset.as_str() {
+                        "top_center" => ((scr_w - hud_w) / 2.0, 40.0),
+                        "top_right" => (scr_w - hud_w - 40.0, 40.0),
+                        "bottom_right" => (scr_w - hud_w - 40.0, scr_h - hud_h - 60.0),
+                        _ => ((scr_w - hud_w) / 2.0, scr_h - hud_h - 60.0), // bottom_center
+                    };
+                    hud_window.set_outer_position(tao::dpi::LogicalPosition::new(px, py));
+                    let mut cfg = config.lock();
+                    cfg.overlay_x = px as i32;
+                    cfg.overlay_y = py as i32;
+                    cfg.overlay_preset = preset;
+                    let _ = cfg.save(&config_path);
+                }
+                AppEvent::SetHudLocked(locked) => {
+                    let _ = hud_window.set_ignore_cursor_events(locked);
+                }
+                AppEvent::OpenSniper => {
+                    #[cfg(windows)]
+                    let bmp_res = ocr::capture_screen_rect_bmp(scr_x as i32, scr_y as i32, scr_w as i32, scr_h as i32);
+                    #[cfg(not(windows))]
+                    let bmp_res: Result<Vec<u8>, String> = Err("Not supported".to_string());
+
+                    if let Ok(bmp) = bmp_res {
+                        let b64 = ocr::fast_base64_encode(&bmp);
+                        let script = format!("window.startSniperWithImage('data:image/bmp;base64,{}');", b64);
+                        let _ = sniper_webview.evaluate_script(&script);
+                        sniper_window.set_visible(true);
+                        sniper_window.set_focus();
+                    }
                 }
             },
             Event::WindowEvent {

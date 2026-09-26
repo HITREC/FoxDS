@@ -7,15 +7,38 @@ use std::sync::Arc;
 
 pub fn find_output_device(name: &str) -> Option<rodio::cpal::Device> {
     let host = rodio::cpal::default_host();
-    if name == "Default" || name.trim().is_empty() {
+    let trimmed = name.trim();
+    if trimmed.eq_ignore_ascii_case("default") || trimmed.is_empty() {
         return host.default_output_device();
     }
 
     if let Ok(devices) = host.output_devices() {
-        for dev in devices {
-            if let Ok(desc) = dev.description() {
-                if desc.name().eq_ignore_ascii_case(name) || desc.name().contains(name) {
-                    return Some(dev);
+        let dev_list: Vec<_> = devices.filter_map(|d| {
+            d.description().ok().map(|desc| (desc.name().to_string(), d))
+        }).collect();
+
+        // 1. Exact match
+        for (desc_name, dev) in &dev_list {
+            if desc_name.eq_ignore_ascii_case(trimmed) {
+                return Some(dev.clone());
+            }
+        }
+
+        let name_lower = trimmed.to_lowercase();
+
+        // 2. Substring match (either desc contains name or name contains desc)
+        for (desc_name, dev) in &dev_list {
+            let desc_lower = desc_name.to_lowercase();
+            if desc_lower.contains(&name_lower) || name_lower.contains(&desc_lower) {
+                return Some(dev.clone());
+            }
+        }
+
+        // 3. Fallback for Virtual Cable keywords
+        if name_lower.contains("cable") {
+            for (desc_name, dev) in &dev_list {
+                if desc_name.to_lowercase().contains("cable") {
+                    return Some(dev.clone());
                 }
             }
         }
@@ -37,33 +60,25 @@ pub fn play_tts_audio(
 
     let shared_bytes = Arc::new(audio_bytes.to_vec());
 
-    // 1. Play to Virtual Cable (for teammates in game/Discord)
     let cable_dev = find_output_device(cable_device_name);
-    let cable_bytes = shared_bytes.clone();
-    let cable_handle = std::thread::spawn(move || {
-        let sink_res = if let Some(dev) = cable_dev {
-            DeviceSinkBuilder::from_device(dev).and_then(|b| b.open_stream())
-        } else {
-            DeviceSinkBuilder::open_default_sink()
-        };
+    let hp_dev = if play_self {
+        find_output_device(headphones_device_name)
+    } else {
+        None
+    };
 
-        if let Ok(sink_handle) = sink_res {
-            let player = Player::connect_new(sink_handle.mixer());
-            player.set_volume(volume);
-            let cursor = Cursor::new(cable_bytes.as_ref().clone());
-            if let Ok(decoder) = Decoder::try_from(cursor) {
-                player.append(decoder);
-                player.sleep_until_end();
-            }
-        }
-    });
+    // Check if cable and headphones are the same device
+    let cable_name = cable_dev.as_ref().and_then(|d| d.description().ok()).map(|d| d.name().to_string()).unwrap_or_default();
+    let hp_name = hp_dev.as_ref().and_then(|d| d.description().ok()).map(|d| d.name().to_string()).unwrap_or_default();
 
-    // 2. Play to Headphones (so user can hear what was synthesized, if play_self is enabled)
-    if play_self {
-        let hp_dev = find_output_device(headphones_device_name);
-        let hp_bytes = shared_bytes.clone();
-        let _ = std::thread::spawn(move || {
-            let sink_res = if let Some(dev) = hp_dev {
+    let is_same_device = !cable_name.is_empty() && cable_name == hp_name;
+
+    if is_same_device || !play_self || hp_dev.is_none() {
+        // Only one output device needed
+        let target_dev = if cable_dev.is_some() { cable_dev } else { hp_dev };
+        let bytes = shared_bytes.clone();
+        let handle = std::thread::spawn(move || {
+            let sink_res = if let Some(dev) = target_dev {
                 DeviceSinkBuilder::from_device(dev).and_then(|b| b.open_stream())
             } else {
                 DeviceSinkBuilder::open_default_sink()
@@ -71,16 +86,71 @@ pub fn play_tts_audio(
 
             if let Ok(sink_handle) = sink_res {
                 let player = Player::connect_new(sink_handle.mixer());
-                player.set_volume(volume * 0.9);
-                let cursor = Cursor::new(hp_bytes.as_ref().clone());
+                player.set_volume(volume);
+                let cursor = Cursor::new(bytes.as_ref().clone());
                 if let Ok(decoder) = Decoder::try_from(cursor) {
                     player.append(decoder);
                     player.sleep_until_end();
                 }
             }
         });
+        let _ = handle.join();
+    } else {
+        // Two distinct devices: play to Cable and to Headphones simultaneously
+        let c_dev = cable_dev;
+        let c_bytes = shared_bytes.clone();
+        let cable_handle = std::thread::spawn(move || {
+            let sink_res = if let Some(dev) = c_dev {
+                DeviceSinkBuilder::from_device(dev).and_then(|b| b.open_stream())
+            } else {
+                DeviceSinkBuilder::open_default_sink()
+            };
+
+            if let Ok(sink_handle) = sink_res {
+                let player = Player::connect_new(sink_handle.mixer());
+                player.set_volume(volume);
+                let cursor = Cursor::new(c_bytes.as_ref().clone());
+                if let Ok(decoder) = Decoder::try_from(cursor) {
+                    player.append(decoder);
+                    player.sleep_until_end();
+                }
+            }
+        });
+
+        let h_dev = hp_dev;
+        let h_bytes = shared_bytes.clone();
+        let hp_handle = std::thread::spawn(move || {
+            let sink_res = if let Some(dev) = h_dev {
+                DeviceSinkBuilder::from_device(dev).and_then(|b| b.open_stream())
+            } else {
+                DeviceSinkBuilder::open_default_sink()
+            };
+
+            if let Ok(sink_handle) = sink_res {
+                let player = Player::connect_new(sink_handle.mixer());
+                player.set_volume(volume * 0.95);
+                let cursor = Cursor::new(h_bytes.as_ref().clone());
+                if let Ok(decoder) = Decoder::try_from(cursor) {
+                    player.append(decoder);
+                    player.sleep_until_end();
+                }
+            }
+        });
+
+        let _ = cable_handle.join();
+        let _ = hp_handle.join();
     }
 
-    let _ = cable_handle.join();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_device_matching() {
+        let dev = find_output_device("Default");
+        assert!(dev.is_some());
+    }
 }

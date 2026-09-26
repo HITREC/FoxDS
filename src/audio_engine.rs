@@ -22,6 +22,15 @@ pub enum AppEvent {
     SpeechEvent(String, String, String),
     StatusEvent(String),
     VuEvent(f32, f32, bool),
+    OpenSniper,
+    UpdateHudStyle {
+        font_size: u32,
+        alpha: f32,
+        border_color: String,
+        border_width: u32,
+    },
+    SetHudPreset(String),
+    SetHudLocked(bool),
 }
 
 pub struct AudioEngine {
@@ -349,18 +358,7 @@ impl AudioEngine {
                 let ocr_pressed = is_key_pressed(&ocr_hotkey);
                 if ocr_pressed && !last_ocr_state {
                     last_ocr_state = true;
-                    let _ = proxy.send_event(AppEvent::StatusEvent("ocr_processing".to_string()));
-
-                    let proxy_ocr = proxy.clone();
-                    thread::spawn(move || {
-                        thread::sleep(Duration::from_millis(400));
-                        let _ = proxy_ocr.send_event(AppEvent::SpeechEvent(
-                            "ocr".to_string(),
-                            "Target identified: Heavy Armored Vehicle".to_string(),
-                            "Цель идентифицирована: Тяжелая бронетехника".to_string(),
-                        ));
-                        let _ = proxy_ocr.send_event(AppEvent::StatusEvent("idle".to_string()));
-                    });
+                    let _ = proxy.send_event(AppEvent::OpenSniper);
                 } else if !ocr_pressed && last_ocr_state {
                     last_ocr_state = false;
                 }

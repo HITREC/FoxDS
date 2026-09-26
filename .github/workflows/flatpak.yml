@@ -22,15 +22,15 @@ jobs:
 
       - name: Setup Flathub
         run: |
-          flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 
       - name: Install Flatpak Runtimes
         run: |
-          flatpak install -y --noninteractive flathub org.gnome.Platform//46 org.gnome.Sdk//46 org.freedesktop.Sdk.Extension.rust-stable//23.08
+          flatpak install --user -y --noninteractive flathub org.gnome.Platform//46 org.gnome.Sdk//46 org.freedesktop.Sdk.Extension.rust-stable//23.08
 
       - name: Build Flatpak
         run: |
-          flatpak-builder --force-clean --repo=repo build-dir packaging/flatpak/com.foxds.VoiceTranslator.yml
+          flatpak-builder --force-clean --user --install-deps-from=flathub --repo=repo build-dir packaging/flatpak/com.foxds.VoiceTranslator.yml
 
       - name: Create Flatpak Bundle (.flatpak)
         run: |

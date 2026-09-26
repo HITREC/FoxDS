@@ -65,7 +65,7 @@ pub fn synthesize_speech(text: &str, voice: &str, speed_percent: u32) -> Result<
     let gec = generate_sec_ms_gec();
     let conn_id = generate_request_id();
     let url_str = format!(
-        "{}?TrustedClientToken={}&ConnectionId={}&Sec-MS-GEC={}&Sec-MS-GEC-Version=1-130.0.2849.68",
+        "{}?TrustedClientToken={}&ConnectionId={}&Sec-MS-GEC={}&Sec-MS-GEC-Version=1-143.0.3650.75",
         WSS_URL, TRUSTED_CLIENT_TOKEN, conn_id, gec
     );
 
@@ -76,7 +76,7 @@ pub fn synthesize_speech(text: &str, voice: &str, speed_percent: u32) -> Result<
     let headers = request.headers_mut();
     headers.insert(
         "User-Agent",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0"
             .parse()
             .unwrap(),
     );
@@ -88,7 +88,7 @@ pub fn synthesize_speech(text: &str, voice: &str, speed_percent: u32) -> Result<
     );
     headers.insert(
         "Accept-Encoding",
-        "gzip, deflate, br".parse().unwrap(),
+        "gzip, deflate, br, zstd".parse().unwrap(),
     );
     headers.insert(
         "Accept-Language",
@@ -101,6 +101,11 @@ pub fn synthesize_speech(text: &str, voice: &str, speed_percent: u32) -> Result<
     headers.insert(
         "Cache-Control",
         "no-cache".parse().unwrap(),
+    );
+    let muid = generate_request_id().to_uppercase();
+    headers.insert(
+        "Cookie",
+        format!("muid={};", muid).parse().unwrap(),
     );
 
     let (mut socket, _resp) = tungstenite::connect(request)
