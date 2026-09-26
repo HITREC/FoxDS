@@ -6,7 +6,7 @@ use crate::config::AppConfig;
 use crate::hotkeys::is_key_pressed;
 use crate::stt::recognize_speech;
 use crate::translator::translate_text;
-use crate::tts::synthesize_speech;
+use crate::tts::synthesize_speech_opt;
 use parking_lot::Mutex;
 use rodio::cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -81,6 +81,7 @@ impl AudioEngine {
 
     /// Start the native background audio capture, loopback monitoring, VU ticker, and PTT hotkeys
     pub fn start(&self) {
+        crate::translator::warm_up_connection();
         self.spawn_mic_stream();
         self.spawn_loopback_stream();
         self.spawn_vu_ticker();
@@ -276,7 +277,8 @@ impl AudioEngine {
 
         *mic_level_arc.lock() = mic_level;
 
-        if mic_level > 15.0 {
+        // Only intentional loud voice into microphone (> 65%) counts as active speech
+        if mic_level > 65.0 {
             *mic_speech_arc.lock() = std::time::Instant::now();
         }
 
@@ -366,10 +368,11 @@ impl AudioEngine {
                 let last_tts_i16 = last_incoming_tts_time.clone();
 
                 // VAD state machine variables
-                let preroll_capacity = (sample_rate as f32 * 0.25) as usize; // 250ms pre-roll
+                let preroll_capacity = (sample_rate as f32 * 0.14) as usize; // 140ms pre-roll
                 let mut preroll_buf: std::collections::VecDeque<f32> = std::collections::VecDeque::with_capacity(preroll_capacity);
                 let mut speech_buf: Vec<f32> = Vec::new();
                 let mut is_speaking = false;
+                let mut peak_rms = 0.0f32;
                 let mut last_speech_time = std::time::Instant::now();
                 let mut speech_start_time = std::time::Instant::now();
 
@@ -403,6 +406,7 @@ impl AudioEngine {
                                     preroll_capacity,
                                     &mut speech_buf,
                                     &mut is_speaking,
+                                    &mut peak_rms,
                                     &mut last_speech_time,
                                     &mut speech_start_time,
                                 );
@@ -440,6 +444,7 @@ impl AudioEngine {
                                     preroll_capacity,
                                     &mut speech_buf,
                                     &mut is_speaking,
+                                    &mut peak_rms,
                                     &mut last_speech_time,
                                     &mut speech_start_time,
                                 );
@@ -487,6 +492,7 @@ impl AudioEngine {
         preroll_cap: usize,
         speech_buf: &mut Vec<f32>,
         is_speaking: &mut bool,
+        peak_rms: &mut f32,
         last_speech_time: &mut std::time::Instant,
         speech_start_time: &mut std::time::Instant,
     ) {
@@ -514,34 +520,45 @@ impl AudioEngine {
             if *is_speaking {
                 *is_speaking = false;
                 speech_buf.clear();
+                *peak_rms = 0.0;
             }
             return;
         }
 
-        // Anti-bleed check: if user is holding PTT F4, spoke recently, or TTS is currently playing, ignore loopback
+        // Anti-bleed: if user holds PTT F4 or Russian TTS is playing in headphones, drop loopback
         let ptt_held = is_ptt.load(Ordering::SeqCst);
-        let mic_recent = ignore_own_mic && mic_speech_arc.lock().elapsed() < Duration::from_millis(650);
-        let tts_playing = is_tts_playing.load(Ordering::SeqCst) || last_tts_time.lock().elapsed() < Duration::from_millis(500);
+        let tts_playing = is_tts_playing.load(Ordering::SeqCst) || last_tts_time.lock().elapsed() < Duration::from_millis(300);
 
-        if ptt_held || mic_recent || tts_playing {
+        if ptt_held || tts_playing {
             if *is_speaking {
                 *is_speaking = false;
                 speech_buf.clear();
+                *peak_rms = 0.0;
             }
             return;
         }
 
-        // VAD threshold: scale user setting (5..100, default 35) to RMS (0.002 .. 0.040)
-        let vad_threshold = (rms_threshold / 2500.0).clamp(0.002, 0.080);
+        // If user is shouting into mic (mic_level > 65%), don't trigger a NEW incoming recording
+        let mic_loud = ignore_own_mic && mic_speech_arc.lock().elapsed() < Duration::from_millis(400);
+        if !*is_speaking && mic_loud {
+            return;
+        }
+
+        // Sensitive & responsive VAD threshold: scale user setting (5..100, default 35) to RMS (0.0018 .. 0.035)
+        let vad_threshold = (rms_threshold / 7000.0).clamp(0.0018, 0.035);
 
         if rms >= vad_threshold {
             if !*is_speaking {
                 *is_speaking = true;
                 *speech_start_time = std::time::Instant::now();
                 speech_buf.clear();
-                // Prepend rolling pre-roll audio so initial syllable isn't lost
+                // Prepend rolling pre-roll audio so initial syllable is preserved
                 speech_buf.extend(preroll_buf.iter());
+                *peak_rms = rms;
                 let _ = proxy.send_event(AppEvent::StatusEvent("listening".to_string()));
+            }
+            if rms > *peak_rms {
+                *peak_rms = rms;
             }
             speech_buf.extend_from_slice(mono);
             *last_speech_time = std::time::Instant::now();
@@ -550,14 +567,22 @@ impl AudioEngine {
             let silence_dur = last_speech_time.elapsed();
             let total_dur = speech_start_time.elapsed();
 
-            // End of utterance detected after 500ms of silence or max 14s duration
-            if silence_dur >= Duration::from_millis(500) || total_dur >= Duration::from_secs(14) {
+            // Fast dynamic silence limit: 280ms for longer utterance, 330ms for short callout
+            let silence_timeout = if total_dur >= Duration::from_millis(850) {
+                Duration::from_millis(280)
+            } else {
+                Duration::from_millis(330)
+            };
+
+            if silence_dur >= silence_timeout || total_dur >= Duration::from_secs(12) {
                 *is_speaking = false;
                 let utterance = std::mem::take(speech_buf);
+                let utterance_peak_rms = *peak_rms;
+                *peak_rms = 0.0;
                 let _ = proxy.send_event(AppEvent::StatusEvent("idle".to_string()));
 
-                // Minimum speech length 0.30s to filter short clicks / noise
-                let min_samples = (sample_rate as f32 * 0.30) as usize;
+                // Minimum speech length 0.18s to allow fast one-word tactical callouts
+                let min_samples = (sample_rate as f32 * 0.18) as usize;
                 if utterance.len() >= min_samples {
                     let proxy_worker = proxy.clone();
                     let tts_flag_worker = is_tts_playing.clone();
@@ -566,6 +591,7 @@ impl AudioEngine {
                         Self::recognize_and_translate_incoming(
                             &utterance,
                             sample_rate,
+                            utterance_peak_rms,
                             filter_russian,
                             min_confidence,
                             &proxy_worker,
@@ -596,8 +622,9 @@ impl AudioEngine {
     fn recognize_and_translate_incoming(
         samples: &[f32],
         sample_rate: u32,
+        peak_rms: f32,
         filter_russian: bool,
-        min_confidence: f32,
+        _min_confidence: f32,
         proxy: &EventLoopProxy<AppEvent>,
         incoming_enabled: bool,
         incoming_tts_enabled: bool,
@@ -609,14 +636,9 @@ impl AudioEngine {
         last_tts_time: Arc<Mutex<std::time::Instant>>,
     ) {
         match recognize_speech(samples, sample_rate, "en-US") {
-            Ok((recognized, confidence)) => {
+            Ok((recognized, _confidence)) => {
                 let clean = recognized.trim();
                 if clean.is_empty() {
-                    return;
-                }
-
-                // Check AI confidence threshold (lenient so game chatter is never dropped)
-                if confidence < (min_confidence * 0.6).max(0.30) {
                     return;
                 }
 
@@ -625,27 +647,34 @@ impl AudioEngine {
                     return;
                 }
 
+                // Format original English speech with emotion/intonation (ALL CAPS if shouted)
+                let formatted_en = format_with_emotion(clean, peak_rms);
+
                 // Translate English speech to Russian
-                match translate_text(clean, "en", "ru") {
+                match translate_text(&formatted_en.display_text, "en", "ru") {
                     Ok(trans) => {
                         let trans_clean = trans.trim();
                         if !trans_clean.is_empty() {
+                            // Format Russian translation preserving the same emotion (ALL CAPS if shouted)
+                            let formatted_ru = format_with_emotion(trans_clean, peak_rms);
+
                             if incoming_enabled {
                                 let _ = proxy.send_event(AppEvent::SpeechEvent(
                                     "incoming".to_string(),
-                                    clean.to_string(),
-                                    trans_clean.to_string(),
+                                    formatted_en.display_text.clone(),
+                                    formatted_ru.display_text.clone(),
                                 ));
                             }
 
                             if incoming_tts_enabled {
                                 let voice = incoming_voice.to_string();
                                 let hp_name = selected_hp.to_string();
-                                let trans_text = trans_clean.to_string();
+                                let trans_text = formatted_ru.display_text.clone();
+                                let is_shout = formatted_ru.is_shout;
                                 let flag = is_tts_playing.clone();
                                 let last_t = last_tts_time.clone();
                                 thread::spawn(move || {
-                                    if let Ok(audio) = crate::tts::synthesize_speech(&trans_text, &voice, speech_speed) {
+                                    if let Ok(audio) = crate::tts::synthesize_speech_opt(&trans_text, &voice, speech_speed, is_shout) {
                                         let _ = crate::audio_player::play_headphones_audio(&audio, &hp_name, tts_gain, Some(flag), Some(last_t));
                                     }
                                 });
@@ -728,6 +757,8 @@ impl AudioEngine {
                             return;
                         }
 
+                        let peak_rms = calculate_peak_rms(&recorded_samples, (s_rate as f32 * 0.02) as usize);
+
                         // STT -> Translate -> TTS -> Output to Virtual Cable & Headphones
                         match recognize_speech(&recorded_samples, s_rate, "ru-RU") {
                             Ok((original_text, _conf)) => {
@@ -737,19 +768,23 @@ impl AudioEngine {
                                     return;
                                 }
 
+                                let formatted_ru = format_with_emotion(orig, peak_rms);
+
                                 let _ = proxy_worker.send_event(AppEvent::SpeechEvent(
                                     "outgoing".to_string(),
-                                    orig.to_string(),
+                                    formatted_ru.display_text.clone(),
                                     "".to_string(),
                                 ));
 
-                                match translate_text(orig, "ru", "en") {
+                                match translate_text(&formatted_ru.display_text, "ru", "en") {
                                     Ok(translated) => {
                                         let trans = translated.trim();
+                                        let formatted_en = format_with_emotion(trans, peak_rms);
+
                                         let _ = proxy_worker.send_event(AppEvent::SpeechEvent(
                                             "outgoing".to_string(),
-                                            orig.to_string(),
-                                            trans.to_string(),
+                                            formatted_ru.display_text,
+                                            formatted_en.display_text.clone(),
                                         ));
 
                                         let (voice, speed, cable, hp, play_self, tts_gain) = {
@@ -764,7 +799,7 @@ impl AudioEngine {
                                             )
                                         };
 
-                                        if let Ok(audio_bytes) = synthesize_speech(trans, &voice, speed) {
+                                        if let Ok(audio_bytes) = synthesize_speech_opt(&formatted_en.display_text, &voice, speed, formatted_en.is_shout) {
                                             let _ = play_tts_audio(
                                                 &audio_bytes,
                                                 &cable,
@@ -799,6 +834,91 @@ impl AudioEngine {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct FormattedSpeech {
+    pub display_text: String,
+    pub is_shout: bool,
+    pub is_question: bool,
+}
+
+pub fn calculate_peak_rms(samples: &[f32], chunk_size: usize) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    let step = chunk_size.max(256);
+    let mut peak = 0.0f32;
+    for chunk in samples.chunks(step) {
+        let rms = calculate_rms(chunk);
+        if rms > peak {
+            peak = rms;
+        }
+    }
+    peak
+}
+
+pub fn format_with_emotion(text: &str, peak_rms: f32) -> FormattedSpeech {
+    let clean = text.trim();
+    if clean.is_empty() {
+        return FormattedSpeech {
+            display_text: String::new(),
+            is_shout: false,
+            is_question: false,
+        };
+    }
+
+    // Acoustic shouting threshold (RMS >= 0.065 is clearly loud/shouted speech in voice chat / mic)
+    let acoustic_shout = peak_rms >= 0.065;
+    let alpha_chars: Vec<char> = clean.chars().filter(|c| c.is_alphabetic()).collect();
+    let text_all_caps = alpha_chars.len() >= 3 && alpha_chars.iter().all(|c| c.is_uppercase());
+    let text_exclaim = clean.contains('!') || text_all_caps;
+    let is_shout = acoustic_shout || text_exclaim;
+
+    // Question detection: ending question mark or typical question words
+    let clean_lower = clean.to_lowercase();
+    let is_question = clean.ends_with('?')
+        || clean_lower.starts_with("where ")
+        || clean_lower.starts_with("who ")
+        || clean_lower.starts_with("what ")
+        || clean_lower.starts_with("why ")
+        || clean_lower.starts_with("how ")
+        || clean_lower.starts_with("when ")
+        || clean_lower.starts_with("is ")
+        || clean_lower.starts_with("are ")
+        || clean_lower.starts_with("can ")
+        || clean_lower.starts_with("где ")
+        || clean_lower.starts_with("кто ")
+        || clean_lower.starts_with("что ")
+        || clean_lower.starts_with("почему ")
+        || clean_lower.starts_with("зачем ")
+        || clean_lower.starts_with("куда ")
+        || clean_lower.starts_with("откуда ")
+        || clean_lower.starts_with("как ");
+
+    let mut result = clean.to_string();
+
+    if is_shout {
+        result = result.to_uppercase();
+        if is_question {
+            if !result.ends_with("?!") && !result.ends_with("!?") {
+                if result.ends_with('?') {
+                    result.pop();
+                }
+                result.push_str("?!");
+            }
+        } else if !result.ends_with('!') {
+            result.push('!');
+        }
+    } else if is_question && !result.ends_with('?') {
+        result.push('?');
+    }
+
+    FormattedSpeech {
+        display_text: result,
+        is_shout,
+        is_question,
+    }
+}
+
 fn contains_cyrillic(text: &str) -> bool {
     text.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c))
 }
@@ -808,24 +928,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_cpal_wasapi_loopback() {
-        let host = rodio::cpal::default_host();
-        if let Some(out_dev) = host.default_output_device() {
-            println!("Default output device: {:?}", out_dev.description().map(|d| d.name().to_string()));
-            if let Ok(out_cfg) = out_dev.default_output_config() {
-                println!("Default output config: sample_rate={}, channels={}, format={:?}",
-                    out_cfg.sample_rate(), out_cfg.channels(), out_cfg.sample_format());
-                let config: rodio::cpal::StreamConfig = out_cfg.into();
-                let stream_res = out_dev.build_input_stream(
-                    &config,
-                    move |_data: &[f32], _| {},
-                    move |err| eprintln!("Error: {}", err),
-                    None,
-                );
-                println!("build_input_stream on output device result: {:?}", stream_res.is_ok());
-                assert!(stream_res.is_ok());
-            }
-        }
+    fn test_emotion_shout_caps() {
+        // Normal speech
+        let normal = format_with_emotion("enemy spotted", 0.02);
+        assert!(!normal.is_shout);
+        assert_eq!(normal.display_text, "enemy spotted");
+
+        // Acoustic shouting (peak RMS >= 0.065)
+        let shout = format_with_emotion("watch out sniper", 0.09);
+        assert!(shout.is_shout);
+        assert_eq!(shout.display_text, "WATCH OUT SNIPER!");
+
+        // Question detection
+        let q = format_with_emotion("where is the tank", 0.03);
+        assert!(q.is_question);
+        assert_eq!(q.display_text, "where is the tank?");
+
+        // Shouted question
+        let q_shout = format_with_emotion("what are you doing", 0.11);
+        assert!(q_shout.is_shout);
+        assert!(q_shout.is_question);
+        assert_eq!(q_shout.display_text, "WHAT ARE YOU DOING?!");
     }
 
     #[test]

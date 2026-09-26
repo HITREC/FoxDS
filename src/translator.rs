@@ -10,11 +10,23 @@ pub fn get_client() -> &'static Client {
     HTTP_CLIENT.get_or_init(|| {
         Client::builder()
             .timeout(Duration::from_secs(5))
-            .pool_idle_timeout(Duration::from_secs(90))
+            .tcp_nodelay(true)
+            .pool_max_idle_per_host(8)
+            .pool_idle_timeout(Duration::from_secs(120))
             .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             .build()
             .unwrap_or_default()
     })
+}
+
+/// Pre-warms HTTP TCP/TLS connection in background to reduce first-translation latency
+pub fn warm_up_connection() {
+    std::thread::spawn(|| {
+        let client = get_client();
+        let _ = client
+            .get("https://translate.googleapis.com/translate_a/single?client=dict-chrome-ex&sl=en&tl=ru&dt=t&q=test")
+            .send();
+    });
 }
 
 /// Fast Neural Google Translation (dict-chrome-ex) with fallback to MyMemory

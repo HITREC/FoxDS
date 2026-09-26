@@ -57,6 +57,11 @@ fn escape_xml(input: &str) -> String {
 
 /// Synthesize text to MP3 audio bytes using Microsoft Edge-TTS neural speech service
 pub fn synthesize_speech(text: &str, voice: &str, speed_percent: u32) -> Result<Vec<u8>, String> {
+    synthesize_speech_opt(text, voice, speed_percent, false)
+}
+
+/// Synthesize text to MP3 with emotion/shouting support
+pub fn synthesize_speech_opt(text: &str, voice: &str, speed_percent: u32, is_shout: bool) -> Result<Vec<u8>, String> {
     let clean_text = text.trim();
     if clean_text.is_empty() {
         return Ok(Vec::new());
@@ -117,8 +122,14 @@ pub fn synthesize_speech(text: &str, voice: &str, speed_percent: u32) -> Result<
         .send(Message::Text(config_msg.to_string().into()))
         .map_err(|e| format!("Failed to send config: {}", e))?;
 
-    // 2. Format rate
-    let rate_val = speed_percent as i32 - 100;
+    // 2. Format rate and prosody with shouting emotion support
+    let (volume_str, pitch_str, rate_delta) = if is_shout {
+        ("+25%", "+3Hz", 10)
+    } else {
+        ("+0%", "+0Hz", 0)
+    };
+
+    let rate_val = (speed_percent as i32 - 100 + rate_delta).clamp(-50, 100);
     let rate_str = if rate_val >= 0 {
         format!("+{}%", rate_val)
     } else {
@@ -133,8 +144,8 @@ pub fn synthesize_speech(text: &str, voice: &str, speed_percent: u32) -> Result<
         "en-US"
     };
     let ssml_body = format!(
-        "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='{}'><voice name='{}'><prosody rate='{}' pitch='+0Hz' volume='+0%'>{}</prosody></voice></speak>",
-        xml_lang, voice, rate_str, escaped
+        "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='{}'><voice name='{}'><prosody rate='{}' pitch='{}' volume='{}'>{}</prosody></voice></speak>",
+        xml_lang, voice, rate_str, pitch_str, volume_str, escaped
     );
 
     let ssml_msg = format!(

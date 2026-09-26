@@ -886,12 +886,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             });
                         }
                         "test_incoming" => {
-                            let en_text = "Watch out, sniper in the clock tower!";
-                            let ru_text = "Осторожно, снайпер на часовой башне!";
+                            let en_text = "WATCH OUT, SNIPER IN THE CLOCK TOWER!";
+                            let ru_text = "ОСТОРОЖНО, СНАЙПЕР НА ЧАСОВОЙ БАШНЕ!";
                             proxy_ipc.send_event(AppEvent::SpeechEvent(
                                 "incoming".to_string(),
                                 en_text.to_string(),
-                                format!("Тиммейт: {}", ru_text),
+                                format!("ТИММЕЙТ: {}", ru_text),
                             )).ok();
 
                             let cfg = config_clone.lock();
@@ -905,7 +905,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             if incoming_tts {
                                 let text_to_speak = ru_text.to_string();
                                 thread::spawn(move || {
-                                    if let Ok(audio) = tts::synthesize_speech(&text_to_speak, &voice, speed) {
+                                    if let Ok(audio) = tts::synthesize_speech_opt(&text_to_speak, &voice, speed, true) {
                                         let _ = audio_player::play_headphones_audio(&audio, &hp, gain, None, None);
                                     }
                                 });

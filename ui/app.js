@@ -440,8 +440,8 @@ function initActionButtons() {
   if (btnTestInc) {
     btnTestInc.addEventListener('click', () => {
       btnTestInc.innerHTML = '<span>🎧 Тест входящего войса...</span>';
-      updateLiveStream("Watch out, sniper in the clock tower!", "Осторожно, снайпер на часовой башне!");
-      addHistoryItem("ТИММЕЙТ", "tag-spk", "Watch out, sniper in the clock tower!", "Осторожно, снайпер на часовой башне!");
+      updateLiveStream("WATCH OUT, SNIPER IN THE CLOCK TOWER!", "ОСТОРОЖНО, СНАЙПЕР НА ЧАСОВОЙ БАШНЕ!");
+      addHistoryItem("ТИММЕЙТ", "tag-spk", "WATCH OUT, SNIPER IN THE CLOCK TOWER!", "ОСТОРОЖНО, СНАЙПЕР НА ЧАСОВОЙ БАШНЕ!");
 
       setTimeout(() => {
         btnTestInc.innerHTML = '<span>🎧 Проверить перевод речи тиммейта (EN -> RU)</span>';

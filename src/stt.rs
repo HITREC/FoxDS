@@ -11,10 +11,13 @@ use std::time::Duration;
 
 static STT_CLIENT: OnceLock<Client> = OnceLock::new();
 
-fn get_client() -> &'static Client {
+pub fn get_client() -> &'static Client {
     STT_CLIENT.get_or_init(|| {
         Client::builder()
-            .timeout(Duration::from_secs(8))
+            .timeout(Duration::from_secs(6))
+            .tcp_nodelay(true)
+            .pool_max_idle_per_host(8)
+            .pool_idle_timeout(Duration::from_secs(120))
             .build()
             .unwrap_or_default()
     })
@@ -30,6 +33,18 @@ pub fn resample_to_16k(input: &[f32], source_rate: u32) -> Vec<i32> {
             .iter()
             .map(|&s| (s.clamp(-1.0, 1.0) * 32767.0) as i32)
             .collect();
+    }
+
+    // Fast path: 48000Hz -> 16000Hz is exact 3:1 integer decimation with anti-aliasing average
+    if source_rate == 48000 {
+        let chunk_count = input.len() / 3;
+        let mut output = Vec::with_capacity(chunk_count);
+        for i in 0..chunk_count {
+            let idx = i * 3;
+            let avg = (input[idx] + input[idx + 1] + input[idx + 2]) / 3.0;
+            output.push((avg.clamp(-1.0, 1.0) * 32767.0) as i32);
+        }
+        return output;
     }
 
     let ratio = source_rate as f64 / 16000.0;
