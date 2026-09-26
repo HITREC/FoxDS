@@ -233,7 +233,27 @@ function updateLockUI(locked, notifyBackend = true) {
     }
   }
 
-  // 3. Tab 3 Checkbox
+  // 3. Tab 4 Presets Sub Lock Button
+  const subBtn = document.getElementById('btn-toggle-lock-sub');
+  const subIcon = document.getElementById('btn-sub-lock-icon');
+  const subText = document.getElementById('btn-sub-lock-text');
+  if (subBtn) {
+    if (locked) {
+      if (subIcon) subIcon.textContent = '🔓';
+      if (subText) subText.textContent = 'Разблокировать оверлей для перемещения';
+      subBtn.style.background = 'linear-gradient(135deg, #238636, #2ea043)';
+      subBtn.style.borderColor = '#3fb950';
+      subBtn.style.boxShadow = '0 4px 14px rgba(46, 160, 67, 0.35)';
+    } else {
+      if (subIcon) subIcon.textContent = '🔒';
+      if (subText) subText.textContent = 'Зафиксировать оверлей на этом месте';
+      subBtn.style.background = 'linear-gradient(135deg, #f25c05, #ff7b29)';
+      subBtn.style.borderColor = '#f25c05';
+      subBtn.style.boxShadow = '0 4px 14px rgba(242, 92, 5, 0.35)';
+    }
+  }
+
+  // 4. Tab 4 Checkbox
   const chk = document.getElementById('chk-click-through');
   if (chk) chk.checked = locked;
 
@@ -257,6 +277,9 @@ function initOverlayControls() {
 
   const heroBtn = document.getElementById('btn-toggle-lock-hero');
   if (heroBtn) heroBtn.addEventListener('click', toggleHandler);
+
+  const subBtn = document.getElementById('btn-toggle-lock-sub');
+  if (subBtn) subBtn.addEventListener('click', toggleHandler);
 
   const chkClickThrough = document.getElementById('chk-click-through');
   if (chkClickThrough) {

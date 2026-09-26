@@ -501,8 +501,8 @@ impl AudioEngine {
             return;
         }
 
-        // VAD threshold: scale user setting (10..120, default 35) to RMS (0.010 .. 0.120)
-        let vad_threshold = (rms_threshold / 1000.0).max(0.005);
+        // VAD threshold: scale user setting (5..100, default 35) to RMS (0.002 .. 0.040)
+        let vad_threshold = (rms_threshold / 2500.0).clamp(0.002, 0.080);
 
         if rms >= vad_threshold {
             if !*is_speaking {
@@ -520,14 +520,14 @@ impl AudioEngine {
             let silence_dur = last_speech_time.elapsed();
             let total_dur = speech_start_time.elapsed();
 
-            // End of utterance detected after 600ms of silence or max 14s duration
-            if silence_dur >= Duration::from_millis(600) || total_dur >= Duration::from_secs(14) {
+            // End of utterance detected after 500ms of silence or max 14s duration
+            if silence_dur >= Duration::from_millis(500) || total_dur >= Duration::from_secs(14) {
                 *is_speaking = false;
                 let utterance = std::mem::take(speech_buf);
                 let _ = proxy.send_event(AppEvent::StatusEvent("idle".to_string()));
 
-                // Minimum speech length 0.35s to filter short clicks / noise
-                let min_samples = (sample_rate as f32 * 0.35) as usize;
+                // Minimum speech length 0.30s to filter short clicks / noise
+                let min_samples = (sample_rate as f32 * 0.30) as usize;
                 if utterance.len() >= min_samples {
                     let proxy_worker = proxy.clone();
                     thread::spawn(move || {
@@ -567,8 +567,8 @@ impl AudioEngine {
                     return;
                 }
 
-                // Check AI confidence threshold
-                if confidence < min_confidence {
+                // Check AI confidence threshold (lenient so game chatter is never dropped)
+                if confidence < (min_confidence * 0.6).max(0.30) {
                     return;
                 }
 

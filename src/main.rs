@@ -255,26 +255,28 @@ const HUD_HTML: &str = r#"<!DOCTYPE html>
     background: transparent !important;
     overflow: hidden;
     font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    padding: 3px;
   }
   .hud-card {
     width: 100%; height: 100%;
-    background: rgba(14, 18, 26, 0.92);
+    background: rgba(14, 18, 26, 0.90);
     border: 2px solid #f25c05;
-    border-radius: 12px;
-    padding: 10px 18px;
+    border-radius: 10px;
+    padding: 8px 14px;
     display: flex;
     flex-direction: column;
     justify-content: center;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.7), 0 0 16px rgba(242, 92, 5, 0.35);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.8), 0 0 14px rgba(242, 92, 5, 0.4);
     cursor: move;
-    transition: background-color 0.15s ease, border-color 0.15s ease, border-width 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+    touch-action: none;
+    transition: background-color 0.15s ease, border-color 0.15s ease, border-width 0.15s ease, box-shadow 0.15s ease;
   }
   .hud-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    margin-bottom: 4px;
+    margin-bottom: 3px;
   }
   .hud-header-left {
     display: flex;
@@ -300,12 +302,12 @@ const HUD_HTML: &str = r#"<!DOCTYPE html>
     text-overflow: ellipsis;
   }
   .hud-lock-btn {
-    background: rgba(242, 92, 5, 0.2);
-    border: 1px solid #f25c05;
+    background: #f25c05;
+    border: none;
     color: #ffffff;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 700;
-    padding: 2px 8px;
+    padding: 3px 10px;
     border-radius: 6px;
     cursor: pointer;
     display: flex;
@@ -316,10 +318,12 @@ const HUD_HTML: &str = r#"<!DOCTYPE html>
     white-space: nowrap;
     user-select: none;
     flex-shrink: 0;
+    box-shadow: 0 2px 6px rgba(242, 92, 5, 0.4);
   }
   .hud-lock-btn:hover {
-    background: #f25c05;
-    box-shadow: 0 0 10px rgba(242, 92, 5, 0.6);
+    background: #ff7b29;
+    box-shadow: 0 0 10px rgba(242, 92, 5, 0.7);
+    transform: scale(1.03);
   }
   .hud-trans {
     font-size: 15px;
@@ -373,12 +377,12 @@ const HUD_HTML: &str = r#"<!DOCTYPE html>
         document.getElementById('orig').style.fontSize = Math.max(10, fontSize - 3) + 'px';
       }
       if (alpha !== undefined && alpha !== null) {
+        // Set background color with alpha, keep text 100% sharp and readable
         hud.style.backgroundColor = 'rgba(14, 18, 26, ' + alpha + ')';
-        hud.style.opacity = Math.max(0.15, alpha).toString();
       }
       if (borderColor) {
         hud.style.borderColor = borderColor;
-        hud.style.boxShadow = '0 10px 30px rgba(0,0,0,0.7), 0 0 16px ' + borderColor + '55';
+        hud.style.boxShadow = '0 8px 24px rgba(0,0,0,0.8), 0 0 14px ' + borderColor + '55';
         const dot = document.getElementById('dot');
         if (dot) {
           dot.style.background = borderColor;
@@ -386,29 +390,59 @@ const HUD_HTML: &str = r#"<!DOCTYPE html>
         }
         const badge = document.getElementById('badge');
         if (badge) badge.style.color = borderColor;
-        const lockBtn = document.getElementById('btn-hud-lock');
-        if (lockBtn) {
-          lockBtn.style.borderColor = borderColor;
-          lockBtn.style.background = borderColor + '33';
-        }
       }
       if (borderWidth) {
         hud.style.borderWidth = borderWidth + 'px';
       }
     };
 
-    document.getElementById('btn-hud-lock').addEventListener('mousedown', function(e) {
-      e.stopPropagation();
-    });
-    document.getElementById('btn-hud-lock').addEventListener('click', function(e) {
-      e.stopPropagation();
-      if (window.ipc) { window.ipc.postMessage('lock_hud'); }
+    let isDragging = false;
+    let lastScreenX = 0;
+    let lastScreenY = 0;
+    const hudCard = document.getElementById('hud');
+
+    hudCard.addEventListener('pointerdown', function(e) {
+      if (e.target.closest('#btn-hud-lock')) return;
+      if (e.button !== 0) return;
+      isDragging = true;
+      lastScreenX = e.screenX;
+      lastScreenY = e.screenY;
+      try { hudCard.setPointerCapture(e.pointerId); } catch(err) {}
     });
 
-    document.getElementById('hud').addEventListener('mousedown', function(e) {
-      if (e.target.closest('#btn-hud-lock')) return;
-      if (e.button === 0) {
-        if (window.ipc) { window.ipc.postMessage('drag_hud'); }
+    hudCard.addEventListener('pointermove', function(e) {
+      if (!isDragging) return;
+      const dx = e.screenX - lastScreenX;
+      const dy = e.screenY - lastScreenY;
+      if (dx !== 0 || dy !== 0) {
+        lastScreenX = e.screenX;
+        lastScreenY = e.screenY;
+        if (window.ipc) {
+          window.ipc.postMessage(JSON.stringify({ cmd: 'move_hud', dx: dx, dy: dy }));
+        }
+      }
+    });
+
+    function endDrag(e) {
+      if (!isDragging) return;
+      isDragging = false;
+      try { hudCard.releasePointerCapture(e.pointerId); } catch(err) {}
+      if (window.ipc) {
+        window.ipc.postMessage(JSON.stringify({ cmd: 'save_hud_pos' }));
+      }
+    }
+
+    hudCard.addEventListener('pointerup', endDrag);
+    hudCard.addEventListener('pointercancel', endDrag);
+
+    const lockBtn = document.getElementById('btn-hud-lock');
+    lockBtn.addEventListener('pointerdown', function(e) {
+      e.stopPropagation();
+    });
+    lockBtn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      if (window.ipc) {
+        window.ipc.postMessage(JSON.stringify({ cmd: 'lock_hud' }));
       }
     });
   </script>
@@ -460,7 +494,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build(&event_loop)?;
 
     let hud_window = Arc::new(hud_window);
-    let hud_win_drag = hud_window.clone();
 
     // Floating In-Game Sniper / Area Selection Overlay Window
     let (scr_x, scr_y, scr_w, scr_h) = {
@@ -492,28 +525,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let sniper_window = Arc::new(sniper_window);
     let sniper_win_ipc = sniper_window.clone();
-
-    // Enable Windows DWM desktop composition glass frame on transparent overlay windows
-    #[cfg(windows)]
-    {
-        use tao::platform::windows::WindowExtWindows;
-        let margins = windows_sys::Win32::UI::Controls::MARGINS {
-            cxLeftWidth: -1,
-            cxRightWidth: -1,
-            cyTopHeight: -1,
-            cyBottomHeight: -1,
-        };
-        unsafe {
-            windows_sys::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea(
-                hud_window.hwnd() as _,
-                &margins,
-            );
-            windows_sys::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea(
-                sniper_window.hwnd() as _,
-                &margins,
-            );
-        }
-    }
 
     // 3. Assemble embedded HTML with inlined CSS and JS
     let icon_b64 = ocr::fast_base64_encode(APP_ICON_PNG);
@@ -743,6 +754,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 7. HUD Webview
     let proxy_hud = proxy.clone();
+    let hud_win_ipc = hud_window.clone();
     let config_hud = config.clone();
     let config_path_hud = config_path.clone();
 
@@ -751,8 +763,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_html(HUD_HTML)
         .with_ipc_handler(move |req| {
             let body = req.body();
-            if body.contains("drag_hud") {
-                let _ = hud_win_drag.drag_window();
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(body) {
+                if let Some(cmd) = val.get("cmd").and_then(|v| v.as_str()) {
+                    match cmd {
+                        "move_hud" => {
+                            let dx = val.get("dx").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            let dy = val.get("dy").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            if let Ok(cur_pos) = hud_win_ipc.outer_position() {
+                                let scale = hud_win_ipc.scale_factor();
+                                let log_pos = cur_pos.to_logical::<f64>(scale);
+                                let nx = log_pos.x + dx;
+                                let ny = log_pos.y + dy;
+                                hud_win_ipc.set_outer_position(tao::dpi::LogicalPosition::new(nx, ny));
+                            }
+                        }
+                        "save_hud_pos" => {
+                            if let Ok(cur_pos) = hud_win_ipc.outer_position() {
+                                let scale = hud_win_ipc.scale_factor();
+                                let log_pos = cur_pos.to_logical::<f64>(scale);
+                                let mut cfg = config_hud.lock();
+                                cfg.overlay_x = log_pos.x as i32;
+                                cfg.overlay_y = log_pos.y as i32;
+                                let _ = cfg.save(&config_path_hud);
+                            }
+                        }
+                        "lock_hud" => {
+                            let mut cfg = config_hud.lock();
+                            cfg.overlay_locked = true;
+                            let _ = cfg.save(&config_path_hud);
+                            proxy_hud.send_event(AppEvent::SetHudLocked(true)).ok();
+                        }
+                        _ => {}
+                    }
+                }
+            } else if body.contains("drag_hud") {
+                let _ = hud_win_ipc.drag_window();
             } else if body.contains("lock_hud") {
                 let mut cfg = config_hud.lock();
                 cfg.overlay_locked = true;
