@@ -15,6 +15,9 @@ hound = "3.5"
 rodio = { version = "0.22", default-features = false, features = ["playback", "mp3", "wav", "flac"] }
 tungstenite = { version = "0.26", default-features = false, features = ["native-tls", "handshake"] }
 sha2 = "0.10"
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_UI_Input_KeyboardAndMouse",
