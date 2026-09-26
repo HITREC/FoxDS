@@ -42,7 +42,7 @@ const SNIPER_HTML: &str = r#"<!DOCTYPE html>
   * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
   html, body {
     width: 100vw; height: 100vh;
-    background: transparent;
+    background: transparent !important;
     overflow: hidden;
     cursor: crosshair;
     font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
@@ -109,7 +109,6 @@ const SNIPER_HTML: &str = r#"<!DOCTYPE html>
     const canvas = document.getElementById('sniper-canvas');
     const ctx = canvas.getContext('2d');
     const label = document.getElementById('selection-label');
-    let bgImage = null;
     let isDrawing = false;
     let startX = 0, startY = 0;
     let curX = 0, curY = 0;
@@ -117,17 +116,14 @@ const SNIPER_HTML: &str = r#"<!DOCTYPE html>
     function resizeCanvas() {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
+      renderScene();
     }
     window.addEventListener('resize', resizeCanvas);
-    resizeCanvas();
 
     function renderScene() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      if (bgImage) {
-        ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height);
-      }
-      // Dim background
-      ctx.fillStyle = 'rgba(10, 15, 26, 0.45)';
+      // Dim background slightly (35% dark overlay like Windows Snipping Tool)
+      ctx.fillStyle = 'rgba(10, 15, 26, 0.35)';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       if (isDrawing) {
@@ -136,9 +132,9 @@ const SNIPER_HTML: &str = r#"<!DOCTYPE html>
         const sw = Math.abs(curX - startX);
         const sh = Math.abs(curY - startY);
 
-        if (sw > 0 && sh > 0 && bgImage) {
-          // Draw un-dimmed cutout from snapshot
-          ctx.drawImage(bgImage, sx, sy, sw, sh, sx, sy, sw, sh);
+        if (sw > 0 && sh > 0) {
+          // Clear the selection rectangle so the live desktop underneath is 100% crystal clear!
+          ctx.clearRect(sx, sy, sw, sh);
 
           // Draw neon border with dash
           ctx.save();
@@ -176,16 +172,10 @@ const SNIPER_HTML: &str = r#"<!DOCTYPE html>
       }
     }
 
-    window.startSniperWithImage = function(dataUrl) {
+    window.initSniper = function() {
       isDrawing = false;
-      resizeCanvas();
       label.style.display = 'none';
-      const img = new Image();
-      img.onload = function() {
-        bgImage = img;
-        renderScene();
-      };
-      img.src = dataUrl;
+      resizeCanvas();
     };
 
     window.addEventListener('mousedown', function(e) {
@@ -262,7 +252,7 @@ const HUD_HTML: &str = r#"<!DOCTYPE html>
   * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
   html, body {
     width: 100%; height: 100%;
-    background: transparent;
+    background: transparent !important;
     overflow: hidden;
     font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
   }
@@ -277,7 +267,7 @@ const HUD_HTML: &str = r#"<!DOCTYPE html>
     justify-content: center;
     box-shadow: 0 10px 30px rgba(0,0,0,0.7), 0 0 16px rgba(242, 92, 5, 0.35);
     cursor: move;
-    transition: background-color 0.15s ease, border-color 0.15s ease, border-width 0.15s ease, box-shadow 0.15s ease;
+    transition: background-color 0.15s ease, border-color 0.15s ease, border-width 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
   }
   .hud-header {
     display: flex;
@@ -348,6 +338,7 @@ const HUD_HTML: &str = r#"<!DOCTYPE html>
       }
       if (alpha !== undefined && alpha !== null) {
         hud.style.backgroundColor = 'rgba(14, 18, 26, ' + alpha + ')';
+        hud.style.opacity = Math.max(0.15, alpha).toString();
       }
       if (borderColor) {
         hud.style.borderColor = borderColor;
@@ -373,6 +364,11 @@ const HUD_HTML: &str = r#"<!DOCTYPE html>
 </html>"#;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(windows)]
+    unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::SetProcessDPIAware();
+    }
+
     // 1. Load configuration
     let config_path = config::get_config_path();
     let config = Arc::new(Mutex::new(AppConfig::load_or_default(&config_path)));
@@ -444,6 +440,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let sniper_window = Arc::new(sniper_window);
     let sniper_win_ipc = sniper_window.clone();
+
+    // Enable Windows DWM desktop composition glass frame on transparent overlay windows
+    #[cfg(windows)]
+    {
+        use tao::platform::windows::WindowExtWindows;
+        let margins = windows_sys::Win32::UI::Controls::MARGINS {
+            cxLeftWidth: -1,
+            cxRightWidth: -1,
+            cyTopHeight: -1,
+            cyBottomHeight: -1,
+        };
+        unsafe {
+            windows_sys::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea(
+                hud_window.hwnd() as _,
+                &margins,
+            );
+            windows_sys::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea(
+                sniper_window.hwnd() as _,
+                &margins,
+            );
+        }
+    }
 
     // 3. Assemble embedded HTML with inlined CSS and JS
     let icon_b64 = ocr::fast_base64_encode(APP_ICON_PNG);
@@ -847,18 +865,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let _ = hud_window.set_ignore_cursor_events(locked);
                 }
                 AppEvent::OpenSniper => {
-                    #[cfg(windows)]
-                    let bmp_res = ocr::capture_screen_rect_bmp(scr_x as i32, scr_y as i32, scr_w as i32, scr_h as i32);
-                    #[cfg(not(windows))]
-                    let bmp_res: Result<Vec<u8>, String> = Err("Not supported".to_string());
-
-                    if let Ok(bmp) = bmp_res {
-                        let b64 = ocr::fast_base64_encode(&bmp);
-                        let script = format!("window.startSniperWithImage('data:image/bmp;base64,{}');", b64);
-                        let _ = sniper_webview.evaluate_script(&script);
-                        sniper_window.set_visible(true);
-                        sniper_window.set_focus();
-                    }
+                    sniper_window.set_visible(true);
+                    sniper_window.set_focus();
+                    let _ = sniper_webview.evaluate_script("window.initSniper();");
                 }
             },
             Event::WindowEvent {
