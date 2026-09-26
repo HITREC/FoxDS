@@ -500,7 +500,7 @@ impl AudioEngine {
         let spk_level = (rms * 450.0).clamp(0.0, 100.0);
         *spk_level_arc.lock() = spk_level;
 
-        let (incoming_enabled, incoming_tts_enabled, incoming_voice, selected_hp, speech_speed, tts_gain, rms_threshold, min_confidence, filter_russian, ignore_own_mic) = {
+        let (incoming_enabled, incoming_tts_enabled, incoming_voice, selected_hp, speech_speed, incoming_tts_gain, rms_threshold, min_confidence, filter_russian, ignore_own_mic) = {
             let cfg = cfg_arc.lock();
             (
                 cfg.incoming_enabled,
@@ -508,7 +508,7 @@ impl AudioEngine {
                 cfg.incoming_voice.clone(),
                 cfg.selected_headphones.clone(),
                 cfg.speech_speed,
-                cfg.tts_gain,
+                cfg.incoming_tts_gain,
                 cfg.rms_threshold,
                 cfg.min_confidence,
                 cfg.filter_russian,
@@ -600,7 +600,7 @@ impl AudioEngine {
                             &incoming_voice,
                             &selected_hp,
                             speech_speed,
-                            tts_gain,
+                            incoming_tts_gain,
                             tts_flag_worker,
                             tts_time_worker,
                         );
@@ -631,7 +631,7 @@ impl AudioEngine {
         incoming_voice: &str,
         selected_hp: &str,
         speech_speed: u32,
-        tts_gain: f32,
+        incoming_tts_gain: f32,
         is_tts_playing: Arc<AtomicBool>,
         last_tts_time: Arc<Mutex<std::time::Instant>>,
     ) {
@@ -675,7 +675,7 @@ impl AudioEngine {
                                 let last_t = last_tts_time.clone();
                                 thread::spawn(move || {
                                     if let Ok(audio) = crate::tts::synthesize_speech_opt(&trans_text, &voice, speech_speed, is_shout) {
-                                        let _ = crate::audio_player::play_headphones_audio(&audio, &hp_name, tts_gain, Some(flag), Some(last_t));
+                                        let _ = crate::audio_player::play_headphones_audio(&audio, &hp_name, incoming_tts_gain, Some(flag), Some(last_t));
                                     }
                                 });
                             }

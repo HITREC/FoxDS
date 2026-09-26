@@ -5,6 +5,7 @@
   "incoming_enabled": true,
   "incoming_tts_enabled": true,
   "incoming_voice": "ru-RU-DmitryNeural",
+  "incoming_tts_gain": 1.2,
   "play_self_audio": true,
   "auto_volume_match": true,
   "radio_effect": false,

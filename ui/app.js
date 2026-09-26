@@ -49,6 +49,11 @@ const slidersDef = [
     format: (v) => `${v}%`
   },
   {
+    id: 'range-incoming-tts-gain',
+    valId: 'val-incoming-tts-gain',
+    format: (v) => `${v}%`
+  },
+  {
     id: 'range-incoming-thresh',
     valId: 'val-incoming-thresh',
     format: (v) => `${v}`
@@ -653,6 +658,7 @@ window.initFromConfig = function(cfg) {
     'range-voice-speed': cfg.speech_speed ?? 100,
     'range-mic-gain': Math.round((cfg.mic_gain ?? 1.0) * 100),
     'range-tts-gain': Math.round((cfg.tts_gain ?? 1.2) * 100),
+    'range-incoming-tts-gain': Math.round((cfg.incoming_tts_gain ?? 1.2) * 100),
     'range-incoming-thresh': Math.round(cfg.rms_threshold ?? 35),
     'range-ai-confidence': Math.round((cfg.min_confidence ?? 0.62) * 100),
     'range-ocr-delay': Math.round((cfg.ocr_appear_delay ?? 0.6) * 10),

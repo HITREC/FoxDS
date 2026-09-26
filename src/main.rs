@@ -768,6 +768,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     "range-voice-speed" => cfg.speech_speed = val_num as u32,
                                     "range-mic-gain" => cfg.mic_gain = (val_num / 100.0) as f32,
                                     "range-tts-gain" => cfg.tts_gain = (val_num / 100.0) as f32,
+                                    "range-incoming-tts-gain" => cfg.incoming_tts_gain = (val_num / 100.0) as f32,
                                     "range-incoming-thresh" => cfg.rms_threshold = val_num as f32,
                                     "range-ai-confidence" => cfg.min_confidence = (val_num / 100.0) as f32,
                                     "range-ocr-delay" => cfg.ocr_appear_delay = (val_num / 10.0) as f32,
@@ -899,7 +900,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let voice = cfg.incoming_voice.clone();
                             let hp = cfg.selected_headphones.clone();
                             let speed = cfg.speech_speed;
-                            let gain = cfg.tts_gain;
+                            let gain = cfg.incoming_tts_gain;
                             drop(cfg);
 
                             if incoming_tts {
