@@ -91,8 +91,18 @@ const slidersDef = [
     valId: 'val-overlay-border-w',
     format: (v) => {
       const preview = document.getElementById('hud-preview-box');
-      if (preview) preview.style.borderWidth = `${v}px`;
-      return `${v} px`;
+      const val = parseInt(v, 10);
+      if (preview) {
+        if (val === 0) {
+          preview.style.border = 'none';
+          preview.style.boxShadow = '0 8px 24px rgba(0,0,0,0.85)';
+        } else {
+          const curCol = preview.style.borderColor || '#f25c05';
+          preview.style.border = `${val}px solid ${curCol}`;
+          preview.style.boxShadow = '';
+        }
+      }
+      return val === 0 ? '0 px (Без рамки)' : `${val} px`;
     }
   }
 ];
@@ -308,8 +318,28 @@ function initOverlayControls() {
       colorDots.forEach(d => d.classList.remove('active'));
       dot.classList.add('active');
       const col = dot.getAttribute('data-color');
-      if (previewBox) previewBox.style.borderColor = col;
+      if (previewBox) {
+        previewBox.style.borderColor = col;
+        const bwInput = document.getElementById('range-overlay-border-w');
+        const curBw = bwInput ? parseInt(bwInput.value, 10) : 2;
+        if (curBw > 0) {
+          previewBox.style.border = `${curBw}px solid ${col}`;
+        }
+      }
       sendIPC('set_overlay_color', { color: col });
+    });
+  });
+
+  // Text Color Palette
+  const textColorDots = document.querySelectorAll('.text-color-dot');
+  textColorDots.forEach(dot => {
+    dot.addEventListener('click', () => {
+      textColorDots.forEach(d => d.classList.remove('active'));
+      dot.classList.add('active');
+      const col = dot.getAttribute('data-color');
+      const previewText = document.querySelector('.hud-mini-body');
+      if (previewText) previewText.style.color = col;
+      sendIPC('set_overlay_text_color', { color: col });
     });
   });
 }
@@ -650,12 +680,28 @@ window.initFromConfig = function(cfg) {
     if (oBadge) oBadge.textContent = `✂️ Экран: [${cfg.ocr_hotkey.toUpperCase()}]`;
   }
 
-  // Overlay Color
+  // Overlay Border Color
   if (cfg.overlay_border_color) {
     const previewBox = document.getElementById('hud-preview-box');
-    if (previewBox) previewBox.style.borderColor = cfg.overlay_border_color;
+    if (previewBox) {
+      previewBox.style.borderColor = cfg.overlay_border_color;
+      if (cfg.overlay_border_width && cfg.overlay_border_width > 0) {
+        previewBox.style.border = `${cfg.overlay_border_width}px solid ${cfg.overlay_border_color}`;
+      } else if (cfg.overlay_border_width === 0) {
+        previewBox.style.border = 'none';
+      }
+    }
     document.querySelectorAll('.color-dot').forEach(dot => {
       dot.classList.toggle('active', dot.getAttribute('data-color') === cfg.overlay_border_color);
+    });
+  }
+
+  // Overlay Text Color
+  if (cfg.overlay_text_color) {
+    const previewText = document.querySelector('.hud-mini-body');
+    if (previewText) previewText.style.color = cfg.overlay_text_color;
+    document.querySelectorAll('.text-color-dot').forEach(dot => {
+      dot.classList.toggle('active', dot.getAttribute('data-color') === cfg.overlay_text_color);
     });
   }
 

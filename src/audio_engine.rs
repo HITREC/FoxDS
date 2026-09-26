@@ -28,6 +28,7 @@ pub enum AppEvent {
         alpha: f32,
         border_color: String,
         border_width: u32,
+        text_color: String,
     },
     SetHudPreset(String),
     SetHudLocked(bool),

@@ -269,7 +269,7 @@ const HUD_HTML: &str = r#"<!DOCTYPE html>
     box-shadow: 0 8px 24px rgba(0,0,0,0.8), 0 0 14px rgba(242, 92, 5, 0.4);
     cursor: move;
     touch-action: none;
-    transition: background-color 0.15s ease, border-color 0.15s ease, border-width 0.15s ease, box-shadow 0.15s ease;
+    user-select: none;
   }
   .hud-header {
     display: flex;
@@ -350,26 +350,44 @@ const HUD_HTML: &str = r#"<!DOCTYPE html>
     <div class="hud-header">
       <div class="hud-header-left">
         <div class="hud-dot" id="dot"></div>
-        <div class="hud-badge" id="badge">FOXDS TACTICAL HUD [F4: ГОВОРИТЬ]</div>
+        <div class="hud-badge" id="badge">FOXDS TACTICAL HUD</div>
       </div>
-      <button class="hud-lock-btn" id="btn-hud-lock" title="Зафиксировать оверлей на этом месте (включить клик-сквозь в игру)">🔒 Зафиксировать</button>
+      <button class="hud-lock-btn" id="btn-hud-lock">🔒 Зафиксировать</button>
     </div>
-    <div class="hud-trans" id="trans">FoxDS Pro: Ожидание голосовой команды...</div>
-    <div class="hud-orig" id="orig">Зажмите F4 для перевода речи или Alt+Q для OCR экрана</div>
+    <div class="hud-trans" id="trans">FoxDS Pro онлайн</div>
+    <div class="hud-orig" id="orig" style="display: none;"></div>
   </div>
   <script>
     window.updateHud = function(badge, orig, trans, color) {
       if (badge) document.getElementById('badge').innerText = badge;
-      if (orig) document.getElementById('orig').innerText = orig;
+      const origEl = document.getElementById('orig');
+      if (orig && orig.trim().length > 0) {
+        origEl.innerText = orig;
+        origEl.style.display = 'block';
+      } else {
+        origEl.innerText = '';
+        origEl.style.display = 'none';
+      }
       if (trans) document.getElementById('trans').innerText = trans;
       if (color) {
-        document.getElementById('hud').style.borderColor = color;
-        document.getElementById('dot').style.background = color;
-        document.getElementById('dot').style.boxShadow = '0 0 8px ' + color;
+        const hud = document.getElementById('hud');
+        if (hud) {
+          hud.dataset.borderColor = color;
+          const curBw = parseInt(hud.dataset.borderWidth !== undefined ? hud.dataset.borderWidth : '2', 10);
+          if (curBw > 0) {
+            hud.style.borderColor = color;
+            hud.style.boxShadow = '0 8px 24px rgba(0,0,0,0.8), 0 0 14px ' + color + '55';
+          }
+        }
+        const dot = document.getElementById('dot');
+        if (dot) {
+          dot.style.background = color;
+          dot.style.boxShadow = '0 0 8px ' + color;
+        }
       }
     };
 
-    window.applyOverlayStyle = function(fontSize, alpha, borderColor, borderWidth) {
+    window.applyOverlayStyle = function(fontSize, alpha, borderColor, borderWidth, textColor) {
       const hud = document.getElementById('hud');
       if (!hud) return;
       if (fontSize) {
@@ -380,9 +398,11 @@ const HUD_HTML: &str = r#"<!DOCTYPE html>
         // Set background color with alpha, keep text 100% sharp and readable
         hud.style.backgroundColor = 'rgba(14, 18, 26, ' + alpha + ')';
       }
+      if (textColor) {
+        document.getElementById('trans').style.color = textColor;
+      }
       if (borderColor) {
-        hud.style.borderColor = borderColor;
-        hud.style.boxShadow = '0 8px 24px rgba(0,0,0,0.8), 0 0 14px ' + borderColor + '55';
+        hud.dataset.borderColor = borderColor;
         const dot = document.getElementById('dot');
         if (dot) {
           dot.style.background = borderColor;
@@ -391,42 +411,85 @@ const HUD_HTML: &str = r#"<!DOCTYPE html>
         const badge = document.getElementById('badge');
         if (badge) badge.style.color = borderColor;
       }
-      if (borderWidth) {
-        hud.style.borderWidth = borderWidth + 'px';
+      if (borderWidth !== undefined && borderWidth !== null) {
+        hud.dataset.borderWidth = borderWidth;
+      }
+      const curBw = parseInt(hud.dataset.borderWidth !== undefined ? hud.dataset.borderWidth : '2', 10);
+      const curBc = hud.dataset.borderColor || '#f25c05';
+      if (curBw === 0) {
+        hud.style.border = 'none';
+        hud.style.borderWidth = '0px';
+        hud.style.boxShadow = '0 8px 24px rgba(0,0,0,0.85)';
+      } else {
+        hud.style.border = curBw + 'px solid ' + curBc;
+        hud.style.borderWidth = curBw + 'px';
+        hud.style.boxShadow = '0 8px 24px rgba(0,0,0,0.8), 0 0 14px ' + curBc + '55';
       }
     };
 
     let isDragging = false;
-    let lastScreenX = 0;
-    let lastScreenY = 0;
+    let startScreenX = 0;
+    let startScreenY = 0;
+    let pendingDx = 0;
+    let pendingDy = 0;
+    let rafId = null;
     const hudCard = document.getElementById('hud');
 
     hudCard.addEventListener('pointerdown', function(e) {
       if (e.target.closest('#btn-hud-lock')) return;
       if (e.button !== 0) return;
       isDragging = true;
-      lastScreenX = e.screenX;
-      lastScreenY = e.screenY;
+      startScreenX = e.screenX;
+      startScreenY = e.screenY;
+      pendingDx = 0;
+      pendingDy = 0;
       try { hudCard.setPointerCapture(e.pointerId); } catch(err) {}
+      if (window.ipc) {
+        window.ipc.postMessage(JSON.stringify({ cmd: 'start_drag_hud' }));
+      }
     });
 
     hudCard.addEventListener('pointermove', function(e) {
       if (!isDragging) return;
-      const dx = e.screenX - lastScreenX;
-      const dy = e.screenY - lastScreenY;
-      if (dx !== 0 || dy !== 0) {
-        lastScreenX = e.screenX;
-        lastScreenY = e.screenY;
-        if (window.ipc) {
-          window.ipc.postMessage(JSON.stringify({ cmd: 'move_hud', dx: dx, dy: dy }));
-        }
+      pendingDx += (e.screenX - startScreenX);
+      pendingDy += (e.screenY - startScreenY);
+      startScreenX = e.screenX;
+      startScreenY = e.screenY;
+
+      if (!rafId) {
+        rafId = requestAnimationFrame(function() {
+          rafId = null;
+          if (!isDragging) return;
+          if (pendingDx !== 0 || pendingDy !== 0) {
+            const dx = pendingDx;
+            const dy = pendingDy;
+            pendingDx = 0;
+            pendingDy = 0;
+            if (window.ipc) {
+              window.ipc.postMessage(JSON.stringify({ cmd: 'move_hud', dx: dx, dy: dy }));
+            }
+          }
+        });
       }
     });
 
     function endDrag(e) {
       if (!isDragging) return;
       isDragging = false;
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
       try { hudCard.releasePointerCapture(e.pointerId); } catch(err) {}
+      if (pendingDx !== 0 || pendingDy !== 0) {
+        const dx = pendingDx;
+        const dy = pendingDy;
+        pendingDx = 0;
+        pendingDy = 0;
+        if (window.ipc) {
+          window.ipc.postMessage(JSON.stringify({ cmd: 'move_hud', dx: dx, dy: dy }));
+        }
+      }
       if (window.ipc) {
         window.ipc.postMessage(JSON.stringify({ cmd: 'save_hud_pos' }));
       }
@@ -548,10 +611,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let win_clone = window.clone();
 
     // Floating In-Game HUD Subtitle Overlay Window
-    let (hud_pos_x, hud_pos_y, hud_w, hud_h) = {
+    let (init_hud_x, init_hud_y, hud_w, hud_h) = {
         let cfg = config.lock();
-        (cfg.overlay_x as f64, cfg.overlay_y as f64, cfg.overlay_w as f64, cfg.overlay_h as f64)
+        (cfg.overlay_x, cfg.overlay_y, cfg.overlay_w as f64, cfg.overlay_h as f64)
     };
+    let hud_pos_x = Arc::new(std::sync::atomic::AtomicI32::new(init_hud_x));
+    let hud_pos_y = Arc::new(std::sync::atomic::AtomicI32::new(init_hud_y));
 
     #[cfg(windows)]
     use tao::platform::windows::WindowBuilderExtWindows;
@@ -564,7 +629,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_transparent(true)
         .with_always_on_top(true)
         .with_inner_size(tao::dpi::LogicalSize::new(hud_w.max(500.0), hud_h.max(90.0)))
-        .with_position(tao::dpi::LogicalPosition::new(hud_pos_x, hud_pos_y));
+        .with_position(tao::dpi::LogicalPosition::new(init_hud_x as f64, init_hud_y as f64));
 
     #[cfg(windows)]
     {
@@ -713,6 +778,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             alpha: cfg.overlay_alpha,
                                             border_color: cfg.overlay_border_color.clone(),
                                             border_width: cfg.overlay_border_width,
+                                            text_color: cfg.overlay_text_color.clone(),
                                         }).ok();
                                     }
                                     "range-overlay-alpha" => {
@@ -722,6 +788,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             alpha: cfg.overlay_alpha,
                                             border_color: cfg.overlay_border_color.clone(),
                                             border_width: cfg.overlay_border_width,
+                                            text_color: cfg.overlay_text_color.clone(),
                                         }).ok();
                                     }
                                     "range-overlay-border-w" => {
@@ -731,6 +798,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             alpha: cfg.overlay_alpha,
                                             border_color: cfg.overlay_border_color.clone(),
                                             border_width: cfg.overlay_border_width,
+                                            text_color: cfg.overlay_text_color.clone(),
                                         }).ok();
                                     }
                                     _ => {}
@@ -826,6 +894,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     alpha: cfg.overlay_alpha,
                                     border_color: col.to_string(),
                                     border_width: cfg.overlay_border_width,
+                                    text_color: cfg.overlay_text_color.clone(),
+                                }).ok();
+                            }
+                        }
+                        "set_overlay_text_color" => {
+                            if let Some(col) = val.get("color").and_then(|v| v.as_str()) {
+                                let mut cfg = config_clone.lock();
+                                cfg.overlay_text_color = col.to_string();
+                                let _ = cfg.save(&config_path_clone);
+                                proxy_ipc.send_event(AppEvent::UpdateHudStyle {
+                                    font_size: cfg.overlay_font_size,
+                                    alpha: cfg.overlay_alpha,
+                                    border_color: cfg.overlay_border_color.clone(),
+                                    border_width: cfg.overlay_border_width,
+                                    text_color: col.to_string(),
                                 }).ok();
                             }
                         }
@@ -851,6 +934,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 alpha: cfg.overlay_alpha,
                                 border_color: cfg.overlay_border_color.clone(),
                                 border_width: cfg.overlay_border_width,
+                                text_color: cfg.overlay_text_color.clone(),
                             }).ok();
                         }
                         "trigger_ocr" | "test_ocr" => {
@@ -868,6 +952,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let hud_win_ipc = hud_window.clone();
     let config_hud = config.clone();
     let config_path_hud = config_path.clone();
+    let hud_pos_x_ipc = hud_pos_x.clone();
+    let hud_pos_y_ipc = hud_pos_y.clone();
 
     let hud_webview = WebViewBuilder::new()
         .with_transparent(true)
@@ -877,15 +963,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(body) {
                 if let Some(cmd) = val.get("cmd").and_then(|v| v.as_str()) {
                     match cmd {
-                        "move_hud" => {
-                            let dx = val.get("dx").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                            let dy = val.get("dy").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        "start_drag_hud" => {
                             if let Ok(cur_pos) = hud_win_ipc.outer_position() {
                                 let scale = hud_win_ipc.scale_factor();
                                 let log_pos = cur_pos.to_logical::<f64>(scale);
-                                let nx = log_pos.x + dx;
-                                let ny = log_pos.y + dy;
-                                hud_win_ipc.set_outer_position(tao::dpi::LogicalPosition::new(nx, ny));
+                                hud_pos_x_ipc.store(log_pos.x.round() as i32, Ordering::Relaxed);
+                                hud_pos_y_ipc.store(log_pos.y.round() as i32, Ordering::Relaxed);
+                            }
+                        }
+                        "move_hud" => {
+                            let dx = val.get("dx").and_then(|v| v.as_f64()).unwrap_or(0.0).round() as i32;
+                            let dy = val.get("dy").and_then(|v| v.as_f64()).unwrap_or(0.0).round() as i32;
+                            if dx != 0 || dy != 0 {
+                                let nx = hud_pos_x_ipc.fetch_add(dx, Ordering::Relaxed) + dx;
+                                let ny = hud_pos_y_ipc.fetch_add(dy, Ordering::Relaxed) + dy;
+                                hud_win_ipc.set_outer_position(tao::dpi::LogicalPosition::new(nx as f64, ny as f64));
                             }
                         }
                         "save_hud_pos" => {
@@ -895,6 +987,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let mut cfg = config_hud.lock();
                                 cfg.overlay_x = log_pos.x as i32;
                                 cfg.overlay_y = log_pos.y as i32;
+                                hud_pos_x_ipc.store(cfg.overlay_x, Ordering::Relaxed);
+                                hud_pos_y_ipc.store(cfg.overlay_y, Ordering::Relaxed);
                                 let _ = cfg.save(&config_path_hud);
                             }
                         }
@@ -1021,8 +1115,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // Apply loaded HUD style to the live subtitle window
                     let cfg = config.lock();
                     let hud_init = format!(
-                        "window.applyOverlayStyle({}, {}, '{}', {});",
-                        cfg.overlay_font_size, cfg.overlay_alpha, cfg.overlay_border_color, cfg.overlay_border_width
+                        "window.applyOverlayStyle({}, {}, '{}', {}, '{}');",
+                        cfg.overlay_font_size, cfg.overlay_alpha, cfg.overlay_border_color, cfg.overlay_border_width, cfg.overlay_text_color
                     );
                     let _ = hud_webview.evaluate_script(&hud_init);
                     let _ = hud_window.set_ignore_cursor_events(cfg.overlay_locked);
@@ -1078,10 +1172,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let script = format!("window.updateRealVU({}, {}, {});", mic, spk, active);
                     let _ = webview.evaluate_script(&script);
                 }
-                AppEvent::UpdateHudStyle { font_size, alpha, border_color, border_width } => {
+                AppEvent::UpdateHudStyle { font_size, alpha, border_color, border_width, text_color } => {
                     let script = format!(
-                        "window.applyOverlayStyle({}, {}, '{}', {});",
-                        font_size, alpha, border_color, border_width
+                        "window.applyOverlayStyle({}, {}, '{}', {}, '{}');",
+                        font_size, alpha, border_color, border_width, text_color
                     );
                     let _ = hud_webview.evaluate_script(&script);
                 }
@@ -1093,6 +1187,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         _ => ((scr_w - hud_w) / 2.0, scr_h - hud_h - 60.0), // bottom_center
                     };
                     hud_window.set_outer_position(tao::dpi::LogicalPosition::new(px, py));
+                    hud_pos_x.store(px as i32, Ordering::Relaxed);
+                    hud_pos_y.store(py as i32, Ordering::Relaxed);
                     let mut cfg = config.lock();
                     cfg.overlay_x = px as i32;
                     cfg.overlay_y = py as i32;

@@ -955,7 +955,7 @@ input:checked + .slider-toggle:before {
   margin-top: 6px;
 }
 
-.color-dot {
+.color-dot, .text-color-dot {
   width: 32px;
   height: 32px;
   border-radius: 50%;
@@ -964,7 +964,7 @@ input:checked + .slider-toggle:before {
   transition: transform 0.1s, border-color 0.15s;
 }
 
-.color-dot:hover, .color-dot.active {
+.color-dot:hover, .color-dot.active, .text-color-dot:hover, .text-color-dot.active {
   transform: scale(1.15);
   border-color: #fff;
 }
