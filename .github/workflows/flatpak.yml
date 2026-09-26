@@ -3,9 +3,13 @@ name: Build Linux Flatpak Bundle
 on:
   push:
     branches: [ main, master ]
+    tags: [ 'v*' ]
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   flatpak:
@@ -41,3 +45,36 @@ jobs:
         with:
           name: foxds-voice-translator-flatpak
           path: foxds-voice-translator.flatpak
+
+      - name: Publish GitHub Release
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "FoxDS Voice Translator Pro (Latest Linux Build)"
+          make_latest: true
+          draft: false
+          prerelease: false
+          body: |
+            ## 🐧 FoxDS Voice Translator Pro — Linux Flatpak Release
+            
+            Автономный пакет для любого дистрибутива Linux (Ubuntu, Debian, Fedora, Arch, Manjaro и др.).
+            
+            ### 📥 Быстрая установка:
+            ```bash
+            flatpak install --user foxds-voice-translator.flatpak
+            ```
+            
+            ### 🎙️ Настройка виртуального микрофона для игр и Discord:
+            ```bash
+            flatpak run --command=setup-virtual-mic-linux.sh com.foxds.VoiceTranslator start
+            ```
+            
+            ### 🚀 Запуск:
+            ```bash
+            flatpak run com.foxds.VoiceTranslator
+            ```
+          files: foxds-voice-translator.flatpak
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+

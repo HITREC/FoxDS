@@ -4,7 +4,7 @@
   "passthrough_enabled": true,
   "incoming_enabled": true,
   "incoming_tts_enabled": true,
-  "incoming_voice": "ru-RU-DmitryNeural",
+  "incoming_voice": "ru-RU-SvetlanaNeural",
   "incoming_tts_gain": 0.4,
   "play_self_audio": true,
   "auto_volume_match": true,

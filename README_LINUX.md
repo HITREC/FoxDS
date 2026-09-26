@@ -12,22 +12,26 @@
 
 ---
 
-## 📦 Сборка и отправка другу через Flatpak
+## 📦 Скачивание и передача другу
 
-Благодаря [Flatpak](https://flatpak.org/), приложение упаковывается в **один единственный файл `foxds-voice-translator.flatpak`**.
+Другу **не нужно ничего компилировать** — приложение упаковано в **один готовый автономный файл `foxds-voice-translator.flatpak`**.
 
-### Способ 1. Автоматическая сборка в GitHub Actions (без Linux)
-1. Отправьте изменения в ваш GitHub-репозиторий (`git push`).
-2. В репозитории откройте вкладку **Actions** → выберите **Build Linux Flatpak Bundle** → **Run workflow**.
-3. Скачайте готовый артефакт **`foxds-voice-translator-flatpak`**.
-4. Отправьте файл другу через Telegram, Discord или флешку.
+### 🔗 Прямая ссылка для друга:
+👉 **[Скачать foxds-voice-translator.flatpak](https://github.com/HITREC/FoxDS/releases/latest/download/foxds-voice-translator.flatpak)**
 
-### Способ 2. Сборка на Linux или WSL2 в одну команду
-```bash
-chmod +x packaging/flatpak/build-flatpak.sh
-./packaging/flatpak/build-flatpak.sh
-```
-Скрипт скомпилирует Rust-код и создаст файл `foxds-voice-translator.flatpak`.
+Или страница последнего релиза: **[https://github.com/HITREC/FoxDS/releases/latest](https://github.com/HITREC/FoxDS/releases/latest)**
+
+---
+
+### 🛠️ Сборка из исходников (для разработчиков)
+
+- **Автоматическая сборка в GitHub Actions:** При каждом коммите в `main` сервер GitHub сам собирает приложение и обновляет файл по ссылке выше.
+- **Локальная сборка на Linux или WSL2 в одну команду:**
+  ```bash
+  chmod +x packaging/flatpak/build-flatpak.sh
+  ./packaging/flatpak/build-flatpak.sh
+  ```
+
 
 ---
 

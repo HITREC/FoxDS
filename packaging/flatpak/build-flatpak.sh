@@ -45,7 +45,7 @@ flatpak install --user -y --noninteractive flathub \
 # 4. Сборка проекта
 echo "🔨 Сборка приложения через flatpak-builder..."
 rm -rf build-dir .flatpak-builder
-flatpak-builder --force-clean --user \
+flatpak-builder --disable-rofiles-fuse --share=network --force-clean --user \
     --install-deps-from=flathub \
     --repo=foxds-repo \
     build-dir \
