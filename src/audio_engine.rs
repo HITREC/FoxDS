@@ -683,17 +683,20 @@ impl AudioEngine {
                                 let flag = is_tts_playing.clone();
                                 let last_t = last_tts_time.clone();
                                 thread::spawn(move || {
-                                    if let Ok(audio) = crate::tts::synthesize_speech_advanced(&trans_text, &voice, speech_speed, is_shout, natural_prosody) {
-                                        let _ = crate::audio_player::play_headphones_audio_dsp(
-                                            &audio,
-                                            &hp_name,
-                                            incoming_tts_gain,
-                                            Some(flag),
-                                            Some(last_t),
-                                            tensor_accel,
-                                            tensor_accel,
-                                            radio_effect,
-                                        );
+                                    match crate::tts::synthesize_speech_advanced(&trans_text, &voice, speech_speed, is_shout, natural_prosody) {
+                                        Ok(audio) => {
+                                            let _ = crate::audio_player::play_headphones_audio_dsp(
+                                                &audio,
+                                                &hp_name,
+                                                incoming_tts_gain,
+                                                Some(flag),
+                                                Some(last_t),
+                                                tensor_accel,
+                                                tensor_accel,
+                                                radio_effect,
+                                            );
+                                        }
+                                        Err(e) => eprintln!("[Incoming TTS] Synthesis error: {}", e),
                                     }
                                 });
                             }
@@ -829,23 +832,28 @@ impl AudioEngine {
                                             )
                                         };
 
-                                        if let Ok(audio_bytes) = crate::tts::synthesize_speech_advanced(
+                                        match crate::tts::synthesize_speech_advanced(
                                             &formatted_en.display_text,
                                             &voice,
                                             speed,
                                             formatted_en.is_shout,
                                             natural_prosody,
                                         ) {
-                                            let _ = crate::audio_player::play_tts_audio_dsp(
-                                                &audio_bytes,
-                                                &cable,
-                                                &hp,
-                                                play_self,
-                                                tts_gain,
-                                                tensor_accel,
-                                                tensor_accel,
-                                                radio_effect,
-                                            );
+                                            Ok(audio_bytes) => {
+                                                if let Err(e) = crate::audio_player::play_tts_audio_dsp(
+                                                    &audio_bytes,
+                                                    &cable,
+                                                    &hp,
+                                                    play_self,
+                                                    tts_gain,
+                                                    tensor_accel,
+                                                    tensor_accel,
+                                                    radio_effect,
+                                                ) {
+                                                    eprintln!("[AudioPlayer] Error playing outgoing TTS: {}", e);
+                                                }
+                                            }
+                                            Err(e) => eprintln!("[Outgoing TTS] Synthesis error: {}", e),
                                         }
                                     }
                                     Err(e) => eprintln!("[Translate] Error: {}", e),

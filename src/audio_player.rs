@@ -108,7 +108,9 @@ pub fn play_tts_audio_dsp(
             let s_data = shared_samples.clone();
             let handle = std::thread::spawn(move || {
                 let sink_res = if let Some(dev) = target_dev {
-                    DeviceSinkBuilder::from_device(dev).and_then(|b| b.open_stream())
+                    DeviceSinkBuilder::from_device(dev)
+                        .and_then(|b| b.open_stream())
+                        .or_else(|_| DeviceSinkBuilder::open_default_sink())
                 } else {
                     DeviceSinkBuilder::open_default_sink()
                 };
@@ -119,6 +121,8 @@ pub fn play_tts_audio_dsp(
                     let buffer = rodio::buffer::SamplesBuffer::new(channels, sample_rate, s_data.as_ref().clone());
                     player.append(buffer);
                     player.sleep_until_end();
+                } else {
+                    eprintln!("[AudioPlayer] Failed to open audio sink for playback");
                 }
             });
             let _ = handle.join();
@@ -127,7 +131,9 @@ pub fn play_tts_audio_dsp(
             let c_data = shared_samples.clone();
             let cable_handle = std::thread::spawn(move || {
                 let sink_res = if let Some(dev) = c_dev {
-                    DeviceSinkBuilder::from_device(dev).and_then(|b| b.open_stream())
+                    DeviceSinkBuilder::from_device(dev)
+                        .and_then(|b| b.open_stream())
+                        .or_else(|_| DeviceSinkBuilder::open_default_sink())
                 } else {
                     DeviceSinkBuilder::open_default_sink()
                 };
@@ -145,7 +151,9 @@ pub fn play_tts_audio_dsp(
             let h_data = shared_samples.clone();
             let hp_handle = std::thread::spawn(move || {
                 let sink_res = if let Some(dev) = h_dev {
-                    DeviceSinkBuilder::from_device(dev).and_then(|b| b.open_stream())
+                    DeviceSinkBuilder::from_device(dev)
+                        .and_then(|b| b.open_stream())
+                        .or_else(|_| DeviceSinkBuilder::open_default_sink())
                 } else {
                     DeviceSinkBuilder::open_default_sink()
                 };
@@ -162,6 +170,29 @@ pub fn play_tts_audio_dsp(
             let _ = cable_handle.join();
             let _ = hp_handle.join();
         }
+    } else {
+        // Fallback to raw MP3 decoder if DSP preparation failed
+        let raw_bytes = audio_bytes.to_vec();
+        let target_dev = if cable_dev.is_some() { cable_dev } else { hp_dev };
+        let handle = std::thread::spawn(move || {
+            let sink_res = if let Some(dev) = target_dev {
+                DeviceSinkBuilder::from_device(dev)
+                    .and_then(|b| b.open_stream())
+                    .or_else(|_| DeviceSinkBuilder::open_default_sink())
+            } else {
+                DeviceSinkBuilder::open_default_sink()
+            };
+
+            if let Ok(sink_handle) = sink_res {
+                let player = Player::connect_new(sink_handle.mixer());
+                player.set_volume(volume);
+                if let Ok(decoder) = Decoder::try_from(Cursor::new(raw_bytes)) {
+                    player.append(decoder);
+                    player.sleep_until_end();
+                }
+            }
+        });
+        let _ = handle.join();
     }
 
     Ok(())
@@ -211,7 +242,9 @@ pub fn play_headphones_audio_dsp(
         }
 
         let sink_res = if let Some(dev) = hp_dev {
-            DeviceSinkBuilder::from_device(dev).and_then(|b| b.open_stream())
+            DeviceSinkBuilder::from_device(dev)
+                .and_then(|b| b.open_stream())
+                .or_else(|_| DeviceSinkBuilder::open_default_sink())
         } else {
             DeviceSinkBuilder::open_default_sink()
         };
@@ -270,7 +303,35 @@ mod tests {
 
     #[test]
     fn test_device_matching() {
+        let host = rodio::cpal::default_host();
+        if let Ok(devices) = host.output_devices() {
+            for d in devices {
+                if let Ok(desc) = d.description() {
+                    println!("Found output device: '{}'", desc.name());
+                }
+            }
+        }
         let dev = find_output_device("Default");
         assert!(dev.is_some());
+        let d = dev.unwrap();
+        let sink_res = DeviceSinkBuilder::from_device(d.clone()).and_then(|b| b.open_stream());
+        println!("DeviceSinkBuilder::from_device open_stream result: {:?}", sink_res.is_ok());
+        let def_sink = DeviceSinkBuilder::open_default_sink();
+        println!("DeviceSinkBuilder::open_default_sink result: {:?}", def_sink.is_ok());
+    }
+
+    #[test]
+    fn test_prepare_samples_mp3() {
+        let tts = crate::tts::synthesize_speech_advanced("Testing decoding", "en-US-BrianMultilingualNeural", 100, false, false).unwrap();
+        let prepared = prepare_audio_samples(&tts, true, true, false);
+        assert!(prepared.is_some(), "prepare_audio_samples returned None!");
+        let (ch, sr, samples) = prepared.unwrap();
+        println!("Channels: {}, Sample rate: {}, Samples: {}", ch, sr, samples.len());
+        assert!(!samples.is_empty());
+        let max_abs = samples.iter().fold(0.0f32, |acc, &s| acc.max(s.abs()));
+        let has_nan = samples.iter().any(|s| s.is_nan());
+        println!("Max sample amplitude: {}, has_nan: {}", max_abs, has_nan);
+        assert!(!has_nan);
+        assert!(max_abs > 0.05);
     }
 }

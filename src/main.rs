@@ -897,31 +897,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let speed = cfg.speech_speed;
                             let cable = cfg.selected_cable_in.clone();
                             let hp = cfg.selected_headphones.clone();
-                            let play_self = cfg.play_self_audio;
                             let tts_gain = cfg.tts_gain;
                             let tensor_accel = cfg.tensor_accel;
                             let radio_effect = cfg.radio_effect;
                             let natural_prosody = cfg.natural_prosody;
                             drop(cfg);
 
+                            // In UI test mode, always play to headphones so user can verify the sound
+                            let play_self = true;
+
                             thread::spawn(move || {
-                                if let Ok(audio) = tts::synthesize_speech_advanced(
+                                match tts::synthesize_speech_advanced(
                                     "Voice transmission test. FoxDS Pro is online.",
                                     &voice,
                                     speed,
                                     false,
                                     natural_prosody,
                                 ) {
-                                    let _ = audio_player::play_tts_audio_dsp(
-                                        &audio,
-                                        &cable,
-                                        &hp,
-                                        play_self,
-                                        tts_gain,
-                                        tensor_accel,
-                                        tensor_accel,
-                                        radio_effect,
-                                    );
+                                    Ok(audio) => {
+                                        if let Err(e) = audio_player::play_tts_audio_dsp(
+                                            &audio,
+                                            &cable,
+                                            &hp,
+                                            play_self,
+                                            tts_gain,
+                                            tensor_accel,
+                                            tensor_accel,
+                                            radio_effect,
+                                        ) {
+                                            eprintln!("[Test F4] Playback error: {}", e);
+                                        }
+                                    }
+                                    Err(e) => eprintln!("[Test F4] TTS synthesis error: {}", e),
                                 }
                             });
                         }
@@ -935,27 +942,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             )).ok();
 
                             let cfg = config_clone.lock();
-                            let incoming_tts = cfg.incoming_tts_enabled;
                             let voice = cfg.incoming_voice.clone();
                             let hp = cfg.selected_headphones.clone();
                             let speed = cfg.speech_speed;
-                            let gain = cfg.incoming_tts_gain;
+                            let gain = cfg.incoming_tts_gain.max(0.6);
                             let tensor_accel = cfg.tensor_accel;
                             let radio_effect = cfg.radio_effect;
                             let natural_prosody = cfg.natural_prosody;
                             drop(cfg);
 
-                            if incoming_tts {
-                                let text_to_speak = ru_text.to_string();
-                                thread::spawn(move || {
-                                    if let Ok(audio) = tts::synthesize_speech_advanced(
-                                        &text_to_speak,
-                                        &voice,
-                                        speed,
-                                        true,
-                                        natural_prosody,
-                                    ) {
-                                        let _ = audio_player::play_headphones_audio_dsp(
+                            let text_to_speak = ru_text.to_string();
+                            thread::spawn(move || {
+                                match tts::synthesize_speech_advanced(
+                                    &text_to_speak,
+                                    &voice,
+                                    speed,
+                                    true,
+                                    natural_prosody,
+                                ) {
+                                    Ok(audio) => {
+                                        if let Err(e) = audio_player::play_headphones_audio_dsp(
                                             &audio,
                                             &hp,
                                             gain,
@@ -964,10 +970,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             tensor_accel,
                                             tensor_accel,
                                             radio_effect,
-                                        );
+                                        ) {
+                                            eprintln!("[Test Incoming] Playback error: {}", e);
+                                        }
                                     }
-                                });
-                            }
+                                    Err(e) => eprintln!("[Test Incoming] TTS synthesis error: {}", e),
+                                }
+                            });
                         }
                         "set_click_through" => {
                             let locked = val.get("locked").and_then(|v| v.as_bool()).unwrap_or(false);

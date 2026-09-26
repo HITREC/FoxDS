@@ -135,8 +135,8 @@ pub fn synthesize_speech_advanced(
     let (mut socket, _resp) = tungstenite::connect(request)
         .map_err(|e| format!("Edge-TTS WebSocket connect failed: {}", e))?;
 
-    // 1. Send speech.config with Ultra High Quality 160kbps audio (eliminates metallic/robotic artifacts)
-    let config_msg = "Content-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n{\"context\":{\"synthesis\":{\"audio\":{\"metadataoptions\":{\"sentenceBoundaryEnabled\":\"false\",\"wordBoundaryEnabled\":\"false\"},\"outputFormat\":\"audio-24khz-160kbitrate-mono-mp3\"}}}}\r\n";
+    // 1. Send speech.config
+    let config_msg = "Content-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n{\"context\":{\"synthesis\":{\"audio\":{\"metadataoptions\":{\"sentenceBoundaryEnabled\":\"false\",\"wordBoundaryEnabled\":\"false\"},\"outputFormat\":\"audio-24khz-48kbitrate-mono-mp3\"}}}}\r\n";
     socket
         .send(Message::Text(config_msg.to_string().into()))
         .map_err(|e| format!("Failed to send config: {}", e))?;
@@ -215,4 +215,17 @@ pub fn synthesize_speech_advanced(
     }
 
     Ok(audio_data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tts_synthesis() {
+        let res_ru = synthesize_speech_advanced("Привет, это проверка звука!", "ru-RU-DmitryNeural", 100, false, true);
+        assert!(res_ru.is_ok(), "RU TTS failed: {:?}", res_ru.err());
+        let res_en = synthesize_speech_advanced("Hello world, this is a test!", "en-US-BrianMultilingualNeural", 100, false, true);
+        assert!(res_en.is_ok(), "EN TTS failed: {:?}", res_en.err());
+    }
 }
