@@ -127,9 +127,14 @@ pub fn synthesize_speech(text: &str, voice: &str, speed_percent: u32) -> Result<
 
     let req_id = generate_request_id();
     let escaped = escape_xml(clean_text);
+    let xml_lang = if voice.to_lowercase().starts_with("ru-") {
+        "ru-RU"
+    } else {
+        "en-US"
+    };
     let ssml_body = format!(
-        "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'><voice name='{}'><prosody rate='{}' pitch='+0Hz' volume='+0%'>{}</prosody></voice></speak>",
-        voice, rate_str, escaped
+        "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='{}'><voice name='{}'><prosody rate='{}' pitch='+0Hz' volume='+0%'>{}</prosody></voice></speak>",
+        xml_lang, voice, rate_str, escaped
     );
 
     let ssml_msg = format!(

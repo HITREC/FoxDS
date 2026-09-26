@@ -267,13 +267,32 @@
           <div class="card">
             <div class="toggle-card-plain">
               <div class="toggle-info">
-                <span class="toggle-label" style="font-size: 14px;">Субтитры перевода тиммейтов на экране</span>
-                <span class="toggle-desc">Захватывает английскую речь из наушников и выводит русский перевод в оверлей</span>
+                <span class="toggle-label" style="font-size: 14px;">📝 Субтитры перевода тиммейтов на экране</span>
+                <span class="toggle-desc">Захватывает английскую речь из наушников и выводит русский текст в оверлей</span>
               </div>
               <label class="switch">
                 <input type="checkbox" id="chk-incoming-subtitles" checked>
                 <span class="slider-toggle"></span>
               </label>
+            </div>
+
+            <div class="toggle-card-plain" style="margin-top: 14px; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 14px;">
+              <div class="toggle-info">
+                <span class="toggle-label" style="font-size: 14px;">🔊 Голосовой перевод тиммейтов в наушники</span>
+                <span class="toggle-desc">Когда союзник говорит по-английски, ИИ озвучивает русский перевод прямо вам в наушники</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="chk-incoming-tts" checked>
+                <span class="slider-toggle"></span>
+              </label>
+            </div>
+
+            <div class="input-field-group" style="margin-top: 14px;">
+              <label class="field-label">Голос русской озвучки перевода:</label>
+              <select id="cfg-incoming-voice-select" class="custom-select">
+                <option value="ru-RU-DmitryNeural" selected>🎙️ Дмитрий (Четкий естественный мужской) ★</option>
+                <option value="ru-RU-SvetlanaNeural">🌸 Светлана (Мягкий естественный женский)</option>
+              </select>
             </div>
           </div>
 

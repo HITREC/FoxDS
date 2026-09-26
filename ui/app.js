@@ -154,6 +154,7 @@ function initToggles() {
     'chk-radio-filter',
     'chk-play-self',
     'chk-incoming-subtitles',
+    'chk-incoming-tts',
     'chk-filter-ru',
     'chk-ignore-mic',
     'chk-auto-match',
@@ -176,6 +177,13 @@ function initDropdowns() {
   if (voiceSel) {
     voiceSel.addEventListener('change', () => {
       sendIPC('voice_change', { voice: voiceSel.value });
+    });
+  }
+
+  const inVoiceSel = document.getElementById('cfg-incoming-voice-select');
+  if (inVoiceSel) {
+    inVoiceSel.addEventListener('change', () => {
+      sendIPC('incoming_voice_change', { voice: inVoiceSel.value });
     });
   }
 
@@ -676,11 +684,17 @@ window.initFromConfig = function(cfg) {
   setChk('chk-radio-filter', cfg.radio_effect);
   setChk('chk-play-self', cfg.play_self_audio);
   setChk('chk-incoming-subtitles', cfg.incoming_enabled);
+  setChk('chk-incoming-tts', cfg.incoming_tts_enabled);
   setChk('chk-filter-ru', cfg.filter_russian);
   setChk('chk-ignore-mic', cfg.ignore_own_mic);
   setChk('chk-auto-match', cfg.auto_volume_match);
   setChk('chk-ocr-enabled', cfg.ocr_enabled);
   setChk('chk-click-through', cfg.overlay_locked);
+
+  if (cfg.incoming_voice) {
+    const ivSel = document.getElementById('cfg-incoming-voice-select');
+    if (ivSel) ivSel.value = cfg.incoming_voice;
+  }
 
   // Lock UI state
   updateLockUI(!!cfg.overlay_locked, false);

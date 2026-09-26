@@ -48,6 +48,8 @@ pub struct AudioEngine {
     last_mic_speech: Arc<Mutex<std::time::Instant>>,
     last_mic_level: Arc<Mutex<f32>>,
     last_spk_level: Arc<Mutex<f32>>,
+    is_incoming_tts_playing: Arc<AtomicBool>,
+    last_incoming_tts_time: Arc<Mutex<std::time::Instant>>,
 }
 
 impl AudioEngine {
@@ -62,6 +64,8 @@ impl AudioEngine {
             last_mic_speech: Arc::new(Mutex::new(std::time::Instant::now())),
             last_mic_level: Arc::new(Mutex::new(0.0)),
             last_spk_level: Arc::new(Mutex::new(0.0)),
+            is_incoming_tts_playing: Arc::new(AtomicBool::new(false)),
+            last_incoming_tts_time: Arc::new(Mutex::new(std::time::Instant::now())),
         }
     }
 
@@ -294,17 +298,19 @@ impl AudioEngine {
         let proxy = self.proxy.clone();
         let last_spk_level = self.last_spk_level.clone();
         let last_mic_speech = self.last_mic_speech.clone();
+        let is_incoming_tts_playing = self.is_incoming_tts_playing.clone();
+        let last_incoming_tts_time = self.last_incoming_tts_time.clone();
 
         thread::spawn(move || {
             let host = rodio::cpal::default_host();
 
             while is_running.load(Ordering::SeqCst) {
-                let (incoming_enabled, selected_hp) = {
+                let (incoming_enabled, incoming_tts_enabled, selected_hp) = {
                     let cfg = config.lock();
-                    (cfg.incoming_enabled, cfg.selected_headphones.clone())
+                    (cfg.incoming_enabled, cfg.incoming_tts_enabled, cfg.selected_headphones.clone())
                 };
 
-                if !incoming_enabled {
+                if !incoming_enabled && !incoming_tts_enabled {
                     thread::sleep(Duration::from_millis(500));
                     continue;
                 }
@@ -354,6 +360,10 @@ impl AudioEngine {
                 let proxy_clone = proxy.clone();
                 let spk_level_clone = last_spk_level.clone();
                 let mic_speech_clone = last_mic_speech.clone();
+                let is_tts_f32 = is_incoming_tts_playing.clone();
+                let last_tts_f32 = last_incoming_tts_time.clone();
+                let is_tts_i16 = is_incoming_tts_playing.clone();
+                let last_tts_i16 = last_incoming_tts_time.clone();
 
                 // VAD state machine variables
                 let preroll_capacity = (sample_rate as f32 * 0.25) as usize; // 250ms pre-roll
@@ -387,6 +397,8 @@ impl AudioEngine {
                                     &is_ptt_clone,
                                     &spk_level_clone,
                                     &mic_speech_clone,
+                                    &is_tts_f32,
+                                    &last_tts_f32,
                                     &mut preroll_buf,
                                     preroll_capacity,
                                     &mut speech_buf,
@@ -422,6 +434,8 @@ impl AudioEngine {
                                     &is_ptt_clone,
                                     &spk_level_clone,
                                     &mic_speech_clone,
+                                    &is_tts_i16,
+                                    &last_tts_i16,
                                     &mut preroll_buf,
                                     preroll_capacity,
                                     &mut speech_buf,
@@ -443,8 +457,11 @@ impl AudioEngine {
                 if let Ok(s) = stream_res {
                     let _ = s.play();
                     while is_running.load(Ordering::SeqCst) {
-                        let incoming_on = { config.lock().incoming_enabled };
-                        if !incoming_on {
+                        let (in_sub, in_tts) = {
+                            let cfg = config.lock();
+                            (cfg.incoming_enabled, cfg.incoming_tts_enabled)
+                        };
+                        if !in_sub && !in_tts {
                             break;
                         }
                         thread::sleep(Duration::from_millis(250));
@@ -464,6 +481,8 @@ impl AudioEngine {
         is_ptt: &Arc<AtomicBool>,
         spk_level_arc: &Arc<Mutex<f32>>,
         mic_speech_arc: &Arc<Mutex<std::time::Instant>>,
+        is_tts_playing: &Arc<AtomicBool>,
+        last_tts_time: &Arc<Mutex<std::time::Instant>>,
         preroll_buf: &mut std::collections::VecDeque<f32>,
         preroll_cap: usize,
         speech_buf: &mut Vec<f32>,
@@ -475,10 +494,15 @@ impl AudioEngine {
         let spk_level = (rms * 450.0).clamp(0.0, 100.0);
         *spk_level_arc.lock() = spk_level;
 
-        let (incoming_enabled, rms_threshold, min_confidence, filter_russian, ignore_own_mic) = {
+        let (incoming_enabled, incoming_tts_enabled, incoming_voice, selected_hp, speech_speed, tts_gain, rms_threshold, min_confidence, filter_russian, ignore_own_mic) = {
             let cfg = cfg_arc.lock();
             (
                 cfg.incoming_enabled,
+                cfg.incoming_tts_enabled,
+                cfg.incoming_voice.clone(),
+                cfg.selected_headphones.clone(),
+                cfg.speech_speed,
+                cfg.tts_gain,
                 cfg.rms_threshold,
                 cfg.min_confidence,
                 cfg.filter_russian,
@@ -486,7 +510,7 @@ impl AudioEngine {
             )
         };
 
-        if !incoming_enabled {
+        if !incoming_enabled && !incoming_tts_enabled {
             if *is_speaking {
                 *is_speaking = false;
                 speech_buf.clear();
@@ -494,11 +518,12 @@ impl AudioEngine {
             return;
         }
 
-        // Anti-bleed check: if user is holding PTT F4 or spoke into mic recently (<650ms), ignore loopback
+        // Anti-bleed check: if user is holding PTT F4, spoke recently, or TTS is currently playing, ignore loopback
         let ptt_held = is_ptt.load(Ordering::SeqCst);
         let mic_recent = ignore_own_mic && mic_speech_arc.lock().elapsed() < Duration::from_millis(650);
+        let tts_playing = is_tts_playing.load(Ordering::SeqCst) || last_tts_time.lock().elapsed() < Duration::from_millis(500);
 
-        if ptt_held || mic_recent {
+        if ptt_held || mic_recent || tts_playing {
             if *is_speaking {
                 *is_speaking = false;
                 speech_buf.clear();
@@ -535,6 +560,8 @@ impl AudioEngine {
                 let min_samples = (sample_rate as f32 * 0.30) as usize;
                 if utterance.len() >= min_samples {
                     let proxy_worker = proxy.clone();
+                    let tts_flag_worker = is_tts_playing.clone();
+                    let tts_time_worker = last_tts_time.clone();
                     thread::spawn(move || {
                         Self::recognize_and_translate_incoming(
                             &utterance,
@@ -542,6 +569,14 @@ impl AudioEngine {
                             filter_russian,
                             min_confidence,
                             &proxy_worker,
+                            incoming_enabled,
+                            incoming_tts_enabled,
+                            &incoming_voice,
+                            &selected_hp,
+                            speech_speed,
+                            tts_gain,
+                            tts_flag_worker,
+                            tts_time_worker,
                         );
                     });
                 }
@@ -557,13 +592,21 @@ impl AudioEngine {
         }
     }
 
-    /// Background task for recognizing incoming teammate speech, filtering Russian, and displaying translation
+    /// Background task for recognizing incoming teammate speech, filtering Russian, and displaying translation / speaking TTS
     fn recognize_and_translate_incoming(
         samples: &[f32],
         sample_rate: u32,
         filter_russian: bool,
         min_confidence: f32,
         proxy: &EventLoopProxy<AppEvent>,
+        incoming_enabled: bool,
+        incoming_tts_enabled: bool,
+        incoming_voice: &str,
+        selected_hp: &str,
+        speech_speed: u32,
+        tts_gain: f32,
+        is_tts_playing: Arc<AtomicBool>,
+        last_tts_time: Arc<Mutex<std::time::Instant>>,
     ) {
         match recognize_speech(samples, sample_rate, "en-US") {
             Ok((recognized, confidence)) => {
@@ -587,11 +630,26 @@ impl AudioEngine {
                     Ok(trans) => {
                         let trans_clean = trans.trim();
                         if !trans_clean.is_empty() {
-                            let _ = proxy.send_event(AppEvent::SpeechEvent(
-                                "incoming".to_string(),
-                                clean.to_string(),
-                                trans_clean.to_string(),
-                            ));
+                            if incoming_enabled {
+                                let _ = proxy.send_event(AppEvent::SpeechEvent(
+                                    "incoming".to_string(),
+                                    clean.to_string(),
+                                    trans_clean.to_string(),
+                                ));
+                            }
+
+                            if incoming_tts_enabled {
+                                let voice = incoming_voice.to_string();
+                                let hp_name = selected_hp.to_string();
+                                let trans_text = trans_clean.to_string();
+                                let flag = is_tts_playing.clone();
+                                let last_t = last_tts_time.clone();
+                                thread::spawn(move || {
+                                    if let Ok(audio) = crate::tts::synthesize_speech(&trans_text, &voice, speech_speed) {
+                                        let _ = crate::audio_player::play_headphones_audio(&audio, &hp_name, tts_gain, Some(flag), Some(last_t));
+                                    }
+                                });
+                            }
                         }
                     }
                     Err(e) => eprintln!("[Incoming Translate] Error: {}", e),

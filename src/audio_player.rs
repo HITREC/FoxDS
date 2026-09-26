@@ -144,6 +144,53 @@ pub fn play_tts_audio(
     Ok(())
 }
 
+/// Play audio bytes directly to the user's headphones with anti-echo synchronization flags
+pub fn play_headphones_audio(
+    audio_bytes: &[u8],
+    headphones_device_name: &str,
+    volume: f32,
+    is_playing_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
+    last_played_time: Option<Arc<parking_lot::Mutex<std::time::Instant>>>,
+) -> Result<(), String> {
+    if audio_bytes.is_empty() {
+        return Ok(());
+    }
+
+    let hp_dev = find_output_device(headphones_device_name);
+    let bytes = audio_bytes.to_vec();
+
+    std::thread::spawn(move || {
+        if let Some(ref flag) = is_playing_flag {
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        let sink_res = if let Some(dev) = hp_dev {
+            DeviceSinkBuilder::from_device(dev).and_then(|b| b.open_stream())
+        } else {
+            DeviceSinkBuilder::open_default_sink()
+        };
+
+        if let Ok(sink_handle) = sink_res {
+            let player = Player::connect_new(sink_handle.mixer());
+            player.set_volume(volume);
+            let cursor = Cursor::new(bytes);
+            if let Ok(decoder) = Decoder::try_from(cursor) {
+                player.append(decoder);
+                player.sleep_until_end();
+            }
+        }
+
+        if let Some(ref flag) = is_playing_flag {
+            flag.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+        if let Some(ref t) = last_played_time {
+            *t.lock() = std::time::Instant::now();
+        }
+    });
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

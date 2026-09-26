@@ -832,6 +832,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     "chk-radio-filter" => cfg.radio_effect = checked,
                                     "chk-play-self" => cfg.play_self_audio = checked,
                                     "chk-incoming-subtitles" => cfg.incoming_enabled = checked,
+                                    "chk-incoming-tts" => cfg.incoming_tts_enabled = checked,
                                     "chk-filter-ru" => cfg.filter_russian = checked,
                                     "chk-ignore-mic" => cfg.ignore_own_mic = checked,
                                     "chk-auto-match" => cfg.auto_volume_match = checked,
@@ -845,6 +846,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             if let Some(voice) = val.get("voice").and_then(|v| v.as_str()) {
                                 let mut cfg = config_clone.lock();
                                 cfg.voice = voice.to_string();
+                                let _ = cfg.save(&config_path_clone);
+                            }
+                        }
+                        "incoming_voice_change" => {
+                            if let Some(voice) = val.get("voice").and_then(|v| v.as_str()) {
+                                let mut cfg = config_clone.lock();
+                                cfg.incoming_voice = voice.to_string();
                                 let _ = cfg.save(&config_path_clone);
                             }
                         }
@@ -878,11 +886,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             });
                         }
                         "test_incoming" => {
+                            let en_text = "Watch out, sniper in the clock tower!";
+                            let ru_text = "Осторожно, снайпер на часовой башне!";
                             proxy_ipc.send_event(AppEvent::SpeechEvent(
                                 "incoming".to_string(),
-                                "Teammate: Moving to objective Alpha, need covering fire!".to_string(),
-                                "Тиммейт: Движемся к точке Альфа, нужен прикрывающий огонь!".to_string(),
+                                en_text.to_string(),
+                                format!("Тиммейт: {}", ru_text),
                             )).ok();
+
+                            let cfg = config_clone.lock();
+                            let incoming_tts = cfg.incoming_tts_enabled;
+                            let voice = cfg.incoming_voice.clone();
+                            let hp = cfg.selected_headphones.clone();
+                            let speed = cfg.speech_speed;
+                            let gain = cfg.tts_gain;
+                            drop(cfg);
+
+                            if incoming_tts {
+                                let text_to_speak = ru_text.to_string();
+                                thread::spawn(move || {
+                                    if let Ok(audio) = tts::synthesize_speech(&text_to_speak, &voice, speed) {
+                                        let _ = audio_player::play_headphones_audio(&audio, &hp, gain, None, None);
+                                    }
+                                });
+                            }
                         }
                         "set_click_through" => {
                             let locked = val.get("locked").and_then(|v| v.as_bool()).unwrap_or(false);
