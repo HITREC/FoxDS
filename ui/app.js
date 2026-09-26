@@ -157,6 +157,8 @@ function initToggles() {
   const toggleIds = [
     'chk-passthrough',
     'chk-radio-filter',
+    'chk-tensor-accel',
+    'chk-natural-prosody',
     'chk-play-self',
     'chk-incoming-subtitles',
     'chk-incoming-tts',
@@ -178,6 +180,13 @@ function initToggles() {
 
 // --- Dropdowns & Selection ---
 function initDropdowns() {
+  const tensorSel = document.getElementById('cfg-tensor-backend');
+  if (tensorSel) {
+    tensorSel.addEventListener('change', () => {
+      sendIPC('tensor_backend_change', { backend: tensorSel.value });
+    });
+  }
+
   const voiceSel = document.getElementById('cfg-voice-select');
   if (voiceSel) {
     voiceSel.addEventListener('change', () => {
@@ -402,6 +411,14 @@ function initPreviewCards() {
     radio_filter: {
       title: "Военный радиофильтр Foxhole",
       body: "Тактический полосовой фильтр 300Hz-3400Hz с мягким насыщением. Голос звучит как через настоящую военную рацию Walkie-Talkie."
+    },
+    tensor_accel: {
+      title: "⚡ Аппаратное ускорение (NVIDIA / AMD)",
+      body: "Задействует тензорные ядра NVIDIA RTX (CUDA/TensorRT) или блоки AMD AI (DirectML/ROCm). Активирует теплый студийный эквалайзер и ламповое насыщение гармониками, полностью устраняя роботизированный звук."
+    },
+    natural_prosody: {
+      title: "✨ Живые интонации и авто-пунктуация",
+      body: "Интеллектуальный модуль восстанавливает знаки препинания (?, !), расставляет дыхательные микропаузы перед союзами и модулирует интонации так, чтобы речь звучала как у живого носителя языка."
     },
     play_self: {
       title: "Самопрослушивание в наушниках",
@@ -649,6 +666,28 @@ window.onRustSpeechEvent = function(eventType, origText, transText) {
   }
 };
 
+// Global hook for GPU detection and tensor core status from Rust backend
+window.setGpuInfo = function(gpu) {
+  if (!gpu) return;
+  const statusLine = document.getElementById('gpu-status-text');
+  const badge = document.getElementById('badge-gpu-vendor');
+  if (statusLine && gpu.status_text) {
+    statusLine.textContent = gpu.status_text;
+  }
+  if (badge) {
+    if (gpu.vendor === 'Nvidia') {
+      badge.textContent = '🟢 NVIDIA RTX';
+      badge.className = 'badge-hardware badge-nvidia';
+    } else if (gpu.vendor === 'Amd') {
+      badge.textContent = '🔴 AMD Radeon AI';
+      badge.className = 'badge-hardware badge-amd';
+    } else {
+      badge.textContent = '⚡ DirectML';
+      badge.className = 'badge-hardware badge-generic';
+    }
+  }
+};
+
 // Global hook for initializing UI controls from config
 window.initFromConfig = function(cfg) {
   if (!cfg) return;
@@ -688,6 +727,8 @@ window.initFromConfig = function(cfg) {
   };
   setChk('chk-passthrough', cfg.passthrough_enabled);
   setChk('chk-radio-filter', cfg.radio_effect);
+  setChk('chk-tensor-accel', cfg.tensor_accel);
+  setChk('chk-natural-prosody', cfg.natural_prosody);
   setChk('chk-play-self', cfg.play_self_audio);
   setChk('chk-incoming-subtitles', cfg.incoming_enabled);
   setChk('chk-incoming-tts', cfg.incoming_tts_enabled);
@@ -696,6 +737,11 @@ window.initFromConfig = function(cfg) {
   setChk('chk-auto-match', cfg.auto_volume_match);
   setChk('chk-ocr-enabled', cfg.ocr_enabled);
   setChk('chk-click-through', cfg.overlay_locked);
+
+  if (cfg.tensor_backend) {
+    const tbSel = document.getElementById('cfg-tensor-backend');
+    if (tbSel) tbSel.value = cfg.tensor_backend;
+  }
 
   if (cfg.incoming_voice) {
     const ivSel = document.getElementById('cfg-incoming-voice-select');

@@ -46,19 +46,48 @@ pub fn find_output_device(name: &str) -> Option<rodio::cpal::Device> {
     host.default_output_device()
 }
 
-/// Play audio bytes (MP3/WAV) to one or two output devices (Virtual Cable and Headphones)
-pub fn play_tts_audio(
+use rodio::Source;
+use std::num::{NonZeroU16, NonZeroU32};
+
+fn prepare_audio_samples(
+    audio_bytes: &[u8],
+    apply_warmth: bool,
+    apply_saturation: bool,
+    apply_radio: bool,
+) -> Option<(NonZeroU16, NonZeroU32, Vec<f32>)> {
+    let cursor = Cursor::new(audio_bytes.to_vec());
+    let decoder = Decoder::try_from(cursor).ok()?;
+    let channels = decoder.channels();
+    let sample_rate = decoder.sample_rate();
+    let mut samples: Vec<f32> = decoder.collect();
+
+    if apply_warmth || apply_saturation || apply_radio {
+        crate::dsp::AudioDsp::process_samples(
+            &mut samples,
+            sample_rate.get(),
+            apply_warmth,
+            apply_saturation,
+            apply_radio,
+        );
+    }
+
+    Some((channels, sample_rate, samples))
+}
+
+/// Play audio bytes (MP3/WAV) to one or two output devices (Virtual Cable and Headphones) with DSP
+pub fn play_tts_audio_dsp(
     audio_bytes: &[u8],
     cable_device_name: &str,
     headphones_device_name: &str,
     play_self: bool,
     volume: f32,
+    apply_warmth: bool,
+    apply_saturation: bool,
+    apply_radio: bool,
 ) -> Result<(), String> {
     if audio_bytes.is_empty() {
         return Ok(());
     }
-
-    let shared_bytes = Arc::new(audio_bytes.to_vec());
 
     let cable_dev = find_output_device(cable_device_name);
     let hp_dev = if play_self {
@@ -67,90 +96,107 @@ pub fn play_tts_audio(
         None
     };
 
-    // Check if cable and headphones are the same device
     let cable_name = cable_dev.as_ref().and_then(|d| d.description().ok()).map(|d| d.name().to_string()).unwrap_or_default();
     let hp_name = hp_dev.as_ref().and_then(|d| d.description().ok()).map(|d| d.name().to_string()).unwrap_or_default();
-
     let is_same_device = !cable_name.is_empty() && cable_name == hp_name;
 
-    if is_same_device || !play_self || hp_dev.is_none() {
-        // Only one output device needed
-        let target_dev = if cable_dev.is_some() { cable_dev } else { hp_dev };
-        let bytes = shared_bytes.clone();
-        let handle = std::thread::spawn(move || {
-            let sink_res = if let Some(dev) = target_dev {
-                DeviceSinkBuilder::from_device(dev).and_then(|b| b.open_stream())
-            } else {
-                DeviceSinkBuilder::open_default_sink()
-            };
+    if let Some((channels, sample_rate, samples)) = prepare_audio_samples(audio_bytes, apply_warmth, apply_saturation, apply_radio) {
+        let shared_samples = Arc::new(samples);
 
-            if let Ok(sink_handle) = sink_res {
-                let player = Player::connect_new(sink_handle.mixer());
-                player.set_volume(volume);
-                let cursor = Cursor::new(bytes.as_ref().clone());
-                if let Ok(decoder) = Decoder::try_from(cursor) {
-                    player.append(decoder);
+        if is_same_device || !play_self || hp_dev.is_none() {
+            let target_dev = if cable_dev.is_some() { cable_dev } else { hp_dev };
+            let s_data = shared_samples.clone();
+            let handle = std::thread::spawn(move || {
+                let sink_res = if let Some(dev) = target_dev {
+                    DeviceSinkBuilder::from_device(dev).and_then(|b| b.open_stream())
+                } else {
+                    DeviceSinkBuilder::open_default_sink()
+                };
+
+                if let Ok(sink_handle) = sink_res {
+                    let player = Player::connect_new(sink_handle.mixer());
+                    player.set_volume(volume);
+                    let buffer = rodio::buffer::SamplesBuffer::new(channels, sample_rate, s_data.as_ref().clone());
+                    player.append(buffer);
                     player.sleep_until_end();
                 }
-            }
-        });
-        let _ = handle.join();
-    } else {
-        // Two distinct devices: play to Cable and to Headphones simultaneously
-        let c_dev = cable_dev;
-        let c_bytes = shared_bytes.clone();
-        let cable_handle = std::thread::spawn(move || {
-            let sink_res = if let Some(dev) = c_dev {
-                DeviceSinkBuilder::from_device(dev).and_then(|b| b.open_stream())
-            } else {
-                DeviceSinkBuilder::open_default_sink()
-            };
+            });
+            let _ = handle.join();
+        } else {
+            let c_dev = cable_dev;
+            let c_data = shared_samples.clone();
+            let cable_handle = std::thread::spawn(move || {
+                let sink_res = if let Some(dev) = c_dev {
+                    DeviceSinkBuilder::from_device(dev).and_then(|b| b.open_stream())
+                } else {
+                    DeviceSinkBuilder::open_default_sink()
+                };
 
-            if let Ok(sink_handle) = sink_res {
-                let player = Player::connect_new(sink_handle.mixer());
-                player.set_volume(volume);
-                let cursor = Cursor::new(c_bytes.as_ref().clone());
-                if let Ok(decoder) = Decoder::try_from(cursor) {
-                    player.append(decoder);
+                if let Ok(sink_handle) = sink_res {
+                    let player = Player::connect_new(sink_handle.mixer());
+                    player.set_volume(volume);
+                    let buffer = rodio::buffer::SamplesBuffer::new(channels, sample_rate, c_data.as_ref().clone());
+                    player.append(buffer);
                     player.sleep_until_end();
                 }
-            }
-        });
+            });
 
-        let h_dev = hp_dev;
-        let h_bytes = shared_bytes.clone();
-        let hp_handle = std::thread::spawn(move || {
-            let sink_res = if let Some(dev) = h_dev {
-                DeviceSinkBuilder::from_device(dev).and_then(|b| b.open_stream())
-            } else {
-                DeviceSinkBuilder::open_default_sink()
-            };
+            let h_dev = hp_dev;
+            let h_data = shared_samples.clone();
+            let hp_handle = std::thread::spawn(move || {
+                let sink_res = if let Some(dev) = h_dev {
+                    DeviceSinkBuilder::from_device(dev).and_then(|b| b.open_stream())
+                } else {
+                    DeviceSinkBuilder::open_default_sink()
+                };
 
-            if let Ok(sink_handle) = sink_res {
-                let player = Player::connect_new(sink_handle.mixer());
-                player.set_volume(volume * 0.95);
-                let cursor = Cursor::new(h_bytes.as_ref().clone());
-                if let Ok(decoder) = Decoder::try_from(cursor) {
-                    player.append(decoder);
+                if let Ok(sink_handle) = sink_res {
+                    let player = Player::connect_new(sink_handle.mixer());
+                    player.set_volume(volume * 0.95);
+                    let buffer = rodio::buffer::SamplesBuffer::new(channels, sample_rate, h_data.as_ref().clone());
+                    player.append(buffer);
                     player.sleep_until_end();
                 }
-            }
-        });
+            });
 
-        let _ = cable_handle.join();
-        let _ = hp_handle.join();
+            let _ = cable_handle.join();
+            let _ = hp_handle.join();
+        }
     }
 
     Ok(())
 }
 
-/// Play audio bytes directly to the user's headphones with anti-echo synchronization flags
-pub fn play_headphones_audio(
+/// Fallback wrapper for play_tts_audio
+pub fn play_tts_audio(
+    audio_bytes: &[u8],
+    cable_device_name: &str,
+    headphones_device_name: &str,
+    play_self: bool,
+    volume: f32,
+) -> Result<(), String> {
+    play_tts_audio_dsp(
+        audio_bytes,
+        cable_device_name,
+        headphones_device_name,
+        play_self,
+        volume,
+        true, // warmth EQ
+        true, // tube warmth
+        false,
+    )
+}
+
+/// Play audio bytes directly to the user's headphones with DSP and anti-echo synchronization flags
+pub fn play_headphones_audio_dsp(
     audio_bytes: &[u8],
     headphones_device_name: &str,
     volume: f32,
     is_playing_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
     last_played_time: Option<Arc<parking_lot::Mutex<std::time::Instant>>>,
+    apply_warmth: bool,
+    apply_saturation: bool,
+    apply_radio: bool,
 ) -> Result<(), String> {
     if audio_bytes.is_empty() {
         return Ok(());
@@ -173,10 +219,17 @@ pub fn play_headphones_audio(
         if let Ok(sink_handle) = sink_res {
             let player = Player::connect_new(sink_handle.mixer());
             player.set_volume(volume);
-            let cursor = Cursor::new(bytes);
-            if let Ok(decoder) = Decoder::try_from(cursor) {
-                player.append(decoder);
+
+            if let Some((channels, sample_rate, samples)) = prepare_audio_samples(&bytes, apply_warmth, apply_saturation, apply_radio) {
+                let buffer = rodio::buffer::SamplesBuffer::new(channels, sample_rate, samples);
+                player.append(buffer);
                 player.sleep_until_end();
+            } else {
+                let cursor = Cursor::new(bytes);
+                if let Ok(decoder) = Decoder::try_from(cursor) {
+                    player.append(decoder);
+                    player.sleep_until_end();
+                }
             }
         }
 
@@ -189,6 +242,26 @@ pub fn play_headphones_audio(
     });
 
     Ok(())
+}
+
+/// Play audio bytes directly to the user's headphones with anti-echo synchronization flags
+pub fn play_headphones_audio(
+    audio_bytes: &[u8],
+    headphones_device_name: &str,
+    volume: f32,
+    is_playing_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
+    last_played_time: Option<Arc<parking_lot::Mutex<std::time::Instant>>>,
+) -> Result<(), String> {
+    play_headphones_audio_dsp(
+        audio_bytes,
+        headphones_device_name,
+        volume,
+        is_playing_flag,
+        last_played_time,
+        true,
+        true,
+        false,
+    )
 }
 
 #[cfg(test)]

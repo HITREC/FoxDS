@@ -652,6 +652,53 @@ body {
   color: var(--text-muted);
 }
 
+.toggle-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.badge-hardware {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(242, 92, 5, 0.15);
+  border: 1px solid rgba(242, 92, 5, 0.4);
+  color: var(--accent-orange);
+  letter-spacing: 0.5px;
+}
+
+.badge-hardware.badge-nvidia {
+  background: rgba(62, 207, 142, 0.15);
+  border-color: rgba(62, 207, 142, 0.5);
+  color: #3ecf8e;
+  box-shadow: 0 0 8px rgba(62, 207, 142, 0.2);
+}
+
+.badge-hardware.badge-amd {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #ef4444;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.2);
+}
+
+.badge-hardware.badge-generic {
+  background: rgba(88, 166, 255, 0.15);
+  border-color: rgba(88, 166, 255, 0.5);
+  color: #58a6ff;
+}
+
+.tensor-card {
+  border: 1px solid rgba(62, 207, 142, 0.35);
+  background: linear-gradient(145deg, #1c1c24, #182220);
+}
+
+.tensor-card:hover {
+  border-color: #3ecf8e;
+  box-shadow: 0 4px 16px rgba(62, 207, 142, 0.15);
+}
+
 .switch {
   position: relative;
   display: inline-block;

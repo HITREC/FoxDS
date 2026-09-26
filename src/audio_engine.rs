@@ -6,7 +6,6 @@ use crate::config::AppConfig;
 use crate::hotkeys::is_key_pressed;
 use crate::stt::recognize_speech;
 use crate::translator::translate_text;
-use crate::tts::synthesize_speech_opt;
 use parking_lot::Mutex;
 use rodio::cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,6 +18,7 @@ use tao::event_loop::EventLoopProxy;
 pub enum AppEvent {
     InitConfig(String),
     AudioDevices(String),
+    GpuInfo(String),
     SpeechEvent(String, String, String),
     StatusEvent(String),
     VuEvent(f32, f32, bool),
@@ -500,7 +500,7 @@ impl AudioEngine {
         let spk_level = (rms * 450.0).clamp(0.0, 100.0);
         *spk_level_arc.lock() = spk_level;
 
-        let (incoming_enabled, incoming_tts_enabled, incoming_voice, selected_hp, speech_speed, incoming_tts_gain, rms_threshold, min_confidence, filter_russian, ignore_own_mic) = {
+        let (incoming_enabled, incoming_tts_enabled, incoming_voice, selected_hp, speech_speed, incoming_tts_gain, rms_threshold, min_confidence, filter_russian, ignore_own_mic, tensor_accel, radio_effect, natural_prosody) = {
             let cfg = cfg_arc.lock();
             (
                 cfg.incoming_enabled,
@@ -513,6 +513,9 @@ impl AudioEngine {
                 cfg.min_confidence,
                 cfg.filter_russian,
                 cfg.ignore_own_mic,
+                cfg.tensor_accel,
+                cfg.radio_effect,
+                cfg.natural_prosody,
             )
         };
 
@@ -603,6 +606,9 @@ impl AudioEngine {
                             incoming_tts_gain,
                             tts_flag_worker,
                             tts_time_worker,
+                            tensor_accel,
+                            radio_effect,
+                            natural_prosody,
                         );
                     });
                 }
@@ -634,6 +640,9 @@ impl AudioEngine {
         incoming_tts_gain: f32,
         is_tts_playing: Arc<AtomicBool>,
         last_tts_time: Arc<Mutex<std::time::Instant>>,
+        tensor_accel: bool,
+        radio_effect: bool,
+        natural_prosody: bool,
     ) {
         match recognize_speech(samples, sample_rate, "en-US") {
             Ok((recognized, _confidence)) => {
@@ -674,8 +683,17 @@ impl AudioEngine {
                                 let flag = is_tts_playing.clone();
                                 let last_t = last_tts_time.clone();
                                 thread::spawn(move || {
-                                    if let Ok(audio) = crate::tts::synthesize_speech_opt(&trans_text, &voice, speech_speed, is_shout) {
-                                        let _ = crate::audio_player::play_headphones_audio(&audio, &hp_name, incoming_tts_gain, Some(flag), Some(last_t));
+                                    if let Ok(audio) = crate::tts::synthesize_speech_advanced(&trans_text, &voice, speech_speed, is_shout, natural_prosody) {
+                                        let _ = crate::audio_player::play_headphones_audio_dsp(
+                                            &audio,
+                                            &hp_name,
+                                            incoming_tts_gain,
+                                            Some(flag),
+                                            Some(last_t),
+                                            tensor_accel,
+                                            tensor_accel,
+                                            radio_effect,
+                                        );
                                     }
                                 });
                             }
@@ -796,7 +814,7 @@ impl AudioEngine {
                                             formatted_en.display_text.clone(),
                                         ));
 
-                                        let (voice, speed, cable, hp, play_self, tts_gain) = {
+                                        let (voice, speed, cable, hp, play_self, tts_gain, tensor_accel, radio_effect, natural_prosody) = {
                                             let cfg = cfg_worker.lock();
                                             (
                                                 cfg.voice.clone(),
@@ -805,16 +823,28 @@ impl AudioEngine {
                                                 cfg.selected_headphones.clone(),
                                                 cfg.play_self_audio,
                                                 cfg.tts_gain,
+                                                cfg.tensor_accel,
+                                                cfg.radio_effect,
+                                                cfg.natural_prosody,
                                             )
                                         };
 
-                                        if let Ok(audio_bytes) = synthesize_speech_opt(&formatted_en.display_text, &voice, speed, formatted_en.is_shout) {
-                                            let _ = play_tts_audio(
+                                        if let Ok(audio_bytes) = crate::tts::synthesize_speech_advanced(
+                                            &formatted_en.display_text,
+                                            &voice,
+                                            speed,
+                                            formatted_en.is_shout,
+                                            natural_prosody,
+                                        ) {
+                                            let _ = crate::audio_player::play_tts_audio_dsp(
                                                 &audio_bytes,
                                                 &cable,
                                                 &hp,
                                                 play_self,
                                                 tts_gain,
+                                                tensor_accel,
+                                                tensor_accel,
+                                                radio_effect,
                                             );
                                         }
                                     }

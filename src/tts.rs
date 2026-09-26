@@ -62,10 +62,29 @@ pub fn synthesize_speech(text: &str, voice: &str, speed_percent: u32) -> Result<
 
 /// Synthesize text to MP3 with emotion/shouting support
 pub fn synthesize_speech_opt(text: &str, voice: &str, speed_percent: u32, is_shout: bool) -> Result<Vec<u8>, String> {
-    let clean_text = text.trim();
-    if clean_text.is_empty() {
+    synthesize_speech_advanced(text, voice, speed_percent, is_shout, true)
+}
+
+/// Synthesize text to MP3 with emotion/shouting and intelligent prosody punctuation
+pub fn synthesize_speech_advanced(
+    text: &str,
+    voice: &str,
+    speed_percent: u32,
+    is_shout: bool,
+    natural_prosody: bool,
+) -> Result<Vec<u8>, String> {
+    let raw_text = text.trim();
+    if raw_text.is_empty() {
         return Ok(Vec::new());
     }
+
+    let is_russian = voice.to_lowercase().starts_with("ru-");
+    let enhanced_text = if natural_prosody {
+        crate::prosody::ProsodyEnhancer::enhance(raw_text, is_russian)
+    } else {
+        raw_text.to_string()
+    };
+    let clean_text = enhanced_text.trim();
 
     let gec = generate_sec_ms_gec();
     let conn_id = generate_request_id();
@@ -116,8 +135,8 @@ pub fn synthesize_speech_opt(text: &str, voice: &str, speed_percent: u32, is_sho
     let (mut socket, _resp) = tungstenite::connect(request)
         .map_err(|e| format!("Edge-TTS WebSocket connect failed: {}", e))?;
 
-    // 1. Send speech.config
-    let config_msg = "Content-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n{\"context\":{\"synthesis\":{\"audio\":{\"metadataoptions\":{\"sentenceBoundaryEnabled\":\"false\",\"wordBoundaryEnabled\":\"false\"},\"outputFormat\":\"audio-24khz-48kbitrate-mono-mp3\"}}}}\r\n";
+    // 1. Send speech.config with Ultra High Quality 160kbps audio (eliminates metallic/robotic artifacts)
+    let config_msg = "Content-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n{\"context\":{\"synthesis\":{\"audio\":{\"metadataoptions\":{\"sentenceBoundaryEnabled\":\"false\",\"wordBoundaryEnabled\":\"false\"},\"outputFormat\":\"audio-24khz-160kbitrate-mono-mp3\"}}}}\r\n";
     socket
         .send(Message::Text(config_msg.to_string().into()))
         .map_err(|e| format!("Failed to send config: {}", e))?;
@@ -138,7 +157,7 @@ pub fn synthesize_speech_opt(text: &str, voice: &str, speed_percent: u32, is_sho
 
     let req_id = generate_request_id();
     let escaped = escape_xml(clean_text);
-    let xml_lang = if voice.to_lowercase().starts_with("ru-") {
+    let xml_lang = if is_russian {
         "ru-RU"
     } else {
         "en-US"

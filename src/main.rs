@@ -4,10 +4,13 @@ mod audio;
 mod audio_engine;
 mod audio_player;
 mod config;
+mod dsp;
 mod hotkeys;
 mod ocr;
+mod prosody;
 mod stt;
 mod system_stats;
+mod tensor_engine;
 mod translator;
 mod tts;
 
@@ -760,6 +763,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             let dev_json = AudioEngine::get_devices_json();
                             proxy_ipc.send_event(AppEvent::AudioDevices(dev_json)).ok();
+
+                            // Detect GPU and Tensor Cores support
+                            let gpu = tensor_engine::detect_gpu_device();
+                            if let Ok(gpu_json) = serde_json::to_string(&gpu) {
+                                proxy_ipc.send_event(AppEvent::GpuInfo(gpu_json)).ok();
+                            }
                         }
                         "slider_change" => {
                             if let (Some(id), Some(val_num)) = (
@@ -834,6 +843,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 match id {
                                     "chk-passthrough" => cfg.passthrough_enabled = checked,
                                     "chk-radio-filter" => cfg.radio_effect = checked,
+                                    "chk-tensor-accel" => cfg.tensor_accel = checked,
+                                    "chk-natural-prosody" => cfg.natural_prosody = checked,
                                     "chk-play-self" => cfg.play_self_audio = checked,
                                     "chk-incoming-subtitles" => cfg.incoming_enabled = checked,
                                     "chk-incoming-tts" => cfg.incoming_tts_enabled = checked,
@@ -843,6 +854,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     "chk-ocr-enabled" => cfg.ocr_enabled = checked,
                                     _ => {}
                                 }
+                                let _ = cfg.save(&config_path_clone);
+                            }
+                        }
+                        "tensor_backend_change" => {
+                            if let Some(backend) = val.get("backend").and_then(|v| v.as_str()) {
+                                let mut cfg = config_clone.lock();
+                                cfg.tensor_backend = backend.to_string();
                                 let _ = cfg.save(&config_path_clone);
                             }
                         }
@@ -881,11 +899,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let hp = cfg.selected_headphones.clone();
                             let play_self = cfg.play_self_audio;
                             let tts_gain = cfg.tts_gain;
+                            let tensor_accel = cfg.tensor_accel;
+                            let radio_effect = cfg.radio_effect;
+                            let natural_prosody = cfg.natural_prosody;
                             drop(cfg);
 
                             thread::spawn(move || {
-                                if let Ok(audio) = tts::synthesize_speech("Voice transmission test. FoxDS Pro is online.", &voice, speed) {
-                                    let _ = audio_player::play_tts_audio(&audio, &cable, &hp, play_self, tts_gain);
+                                if let Ok(audio) = tts::synthesize_speech_advanced(
+                                    "Voice transmission test. FoxDS Pro is online.",
+                                    &voice,
+                                    speed,
+                                    false,
+                                    natural_prosody,
+                                ) {
+                                    let _ = audio_player::play_tts_audio_dsp(
+                                        &audio,
+                                        &cable,
+                                        &hp,
+                                        play_self,
+                                        tts_gain,
+                                        tensor_accel,
+                                        tensor_accel,
+                                        radio_effect,
+                                    );
                                 }
                             });
                         }
@@ -904,13 +940,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let hp = cfg.selected_headphones.clone();
                             let speed = cfg.speech_speed;
                             let gain = cfg.incoming_tts_gain;
+                            let tensor_accel = cfg.tensor_accel;
+                            let radio_effect = cfg.radio_effect;
+                            let natural_prosody = cfg.natural_prosody;
                             drop(cfg);
 
                             if incoming_tts {
                                 let text_to_speak = ru_text.to_string();
                                 thread::spawn(move || {
-                                    if let Ok(audio) = tts::synthesize_speech_opt(&text_to_speak, &voice, speed, true) {
-                                        let _ = audio_player::play_headphones_audio(&audio, &hp, gain, None, None);
+                                    if let Ok(audio) = tts::synthesize_speech_advanced(
+                                        &text_to_speak,
+                                        &voice,
+                                        speed,
+                                        true,
+                                        natural_prosody,
+                                    ) {
+                                        let _ = audio_player::play_headphones_audio_dsp(
+                                            &audio,
+                                            &hp,
+                                            gain,
+                                            None,
+                                            None,
+                                            tensor_accel,
+                                            tensor_accel,
+                                            radio_effect,
+                                        );
                                     }
                                 });
                             }
@@ -1191,6 +1245,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 AppEvent::AudioDevices(json_str) => {
                     let script = format!("window.setAudioDevices({});", json_str);
+                    let _ = webview.evaluate_script(&script);
+                }
+                AppEvent::GpuInfo(json_str) => {
+                    let script = format!("if (window.setGpuInfo) window.setGpuInfo({});", json_str);
                     let _ = webview.evaluate_script(&script);
                 }
                 AppEvent::SpeechEvent(stype, orig, trans) => {
