@@ -35,12 +35,12 @@ fi
 echo "📦 Проверка подключения Flathub..."
 flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 
-# 3. Установка GNOME 46 Platform & Rust SDK
-echo "⬇️  Проверка зависимостей Flatpak SDK (GNOME 46 + Rust)..."
+# 3. Установка GNOME 47 Platform & Rust SDK
+echo "⬇️  Проверка зависимостей Flatpak SDK (GNOME 47 + Rust)..."
 flatpak install --user -y --noninteractive flathub \
-    org.gnome.Platform//46 \
-    org.gnome.Sdk//46 \
-    org.freedesktop.Sdk.Extension.rust-stable//23.08 || true
+    org.gnome.Platform//47 \
+    org.gnome.Sdk//47 \
+    org.freedesktop.Sdk.Extension.rust-stable//24.08 || true
 
 # 4. Сборка проекта
 echo "🔨 Сборка приложения через flatpak-builder..."
