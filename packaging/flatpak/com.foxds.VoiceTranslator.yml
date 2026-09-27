@@ -46,6 +46,9 @@ modules:
       - install -Dm644 packaging/flatpak/icons/scalable/com.foxds.VoiceTranslator.svg /app/share/icons/hicolor/scalable/apps/com.foxds.VoiceTranslator.svg
       # 6. Install Linux Virtual Microphone helper
       - install -Dm755 packaging/flatpak/setup-virtual-mic-linux.sh /app/bin/setup-virtual-mic-linux.sh
+    build-options:
+      build-args:
+        - --share=network
     sources:
       - type: dir
         path: ../..
