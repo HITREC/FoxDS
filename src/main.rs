@@ -26,6 +26,11 @@ use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tao::window::WindowBuilder;
 use wry::WebViewBuilder;
 
+#[cfg(target_os = "linux")]
+use tao::platform::unix::WindowExtUnix;
+#[cfg(target_os = "linux")]
+use wry::WebViewBuilderExtUnix;
+
 const HTML_INDEX: &str = include_str!("../ui/index.html");
 const CSS_STYLE: &str = include_str!("../ui/style.css");
 const JS_APP: &str = include_str!("../ui/app.js");
@@ -766,7 +771,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let is_running_clone = is_running.clone();
     let proxy_ipc = proxy.clone();
 
-    let webview = WebViewBuilder::new()
+    let webview_builder = WebViewBuilder::new()
         .with_html(full_html)
         .with_ipc_handler(move |req| {
             let body = req.body();
@@ -1088,8 +1093,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
-        })
-        .build(&*window)?;
+        });
+
+    #[cfg(not(target_os = "linux"))]
+    let webview = webview_builder.build(&*window)?;
+    #[cfg(target_os = "linux")]
+    let webview = webview_builder.build_gtk(window.gtk_window())?;
 
     // 7. HUD Webview
     let proxy_hud = proxy.clone();
@@ -1099,7 +1108,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let hud_pos_x_ipc = hud_pos_x.clone();
     let hud_pos_y_ipc = hud_pos_y.clone();
 
-    let hud_webview = WebViewBuilder::new()
+    let hud_webview_builder = WebViewBuilder::new()
         .with_transparent(true)
         .with_html(HUD_HTML)
         .with_ipc_handler(move |req| {
@@ -1153,8 +1162,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let _ = cfg.save(&config_path_hud);
                 proxy_hud.send_event(AppEvent::SetHudLocked(true)).ok();
             }
-        })
-        .build(&*hud_window)?;
+        });
+
+    #[cfg(not(target_os = "linux"))]
+    let hud_webview = hud_webview_builder.build(&*hud_window)?;
+    #[cfg(target_os = "linux")]
+    let hud_webview = hud_webview_builder.build_gtk(hud_window.gtk_window())?;
 
     #[cfg(windows)]
     {
@@ -1170,7 +1183,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 8. Sniper / Screen Selection Webview
     let proxy_sniper = proxy.clone();
 
-    let sniper_webview = WebViewBuilder::new()
+    let sniper_webview_builder = WebViewBuilder::new()
         .with_transparent(true)
         .with_html(SNIPER_HTML)
         .with_ipc_handler(move |req| {
@@ -1235,8 +1248,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
-        })
-        .build(&*sniper_window)?;
+        });
+
+    #[cfg(not(target_os = "linux"))]
+    let sniper_webview = sniper_webview_builder.build(&*sniper_window)?;
+    #[cfg(target_os = "linux")]
+    let sniper_webview = sniper_webview_builder.build_gtk(sniper_window.gtk_window())?;
 
     #[cfg(windows)]
     {
