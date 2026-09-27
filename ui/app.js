@@ -688,9 +688,12 @@ window.setGpuInfo = function(gpu) {
   }
 };
 
+let lastLoadedConfig = null;
+
 // Global hook for initializing UI controls from config
 window.initFromConfig = function(cfg) {
   if (!cfg) return;
+  lastLoadedConfig = cfg;
 
   // Sliders
   const mapSliders = {
@@ -802,6 +805,20 @@ window.initFromConfig = function(cfg) {
       btn.classList.toggle('active', btn.getAttribute('data-pos') === cfg.overlay_preset);
     });
   }
+
+  // Restore saved audio devices if options already exist
+  if (cfg.selected_mic) {
+    const el = document.getElementById('sel-mic-device');
+    if (el && el.options.length > 0) el.value = cfg.selected_mic;
+  }
+  if (cfg.selected_headphones) {
+    const el = document.getElementById('sel-spk-device');
+    if (el && el.options.length > 0) el.value = cfg.selected_headphones;
+  }
+  if (cfg.selected_cable_in) {
+    const el = document.getElementById('sel-cable-device');
+    if (el && el.options.length > 0) el.value = cfg.selected_cable_in;
+  }
 };
 
 // Global hook for populating device dropdowns
@@ -810,27 +827,46 @@ window.setAudioDevices = function(data) {
   const inputs = data.inputs || [];
   const outputs = data.outputs || [];
 
-  const fillSelect = (id, list, defaultLabel) => {
+  const fillSelect = (id, list, defaultLabel, savedVal) => {
     const sel = document.getElementById(id);
     if (!sel) return;
-    const curVal = sel.value;
+    const targetVal = savedVal || sel.value;
     sel.innerHTML = '';
     const defOpt = document.createElement('option');
     defOpt.value = 'Default';
     defOpt.textContent = defaultLabel;
     sel.appendChild(defOpt);
 
+    let found = false;
     list.forEach(d => {
       const opt = document.createElement('option');
       opt.value = d.name;
       opt.textContent = d.name;
+      if (d.name === targetVal) {
+        opt.selected = true;
+        found = true;
+      }
       sel.appendChild(opt);
     });
 
-    if (curVal) sel.value = curVal;
+    if (found) {
+      sel.value = targetVal;
+    } else if (targetVal === 'Default' || !targetVal) {
+      sel.value = 'Default';
+    } else {
+      const missingOpt = document.createElement('option');
+      missingOpt.value = targetVal;
+      missingOpt.textContent = `${targetVal} (не подключено)`;
+      missingOpt.selected = true;
+      sel.appendChild(missingOpt);
+    }
   };
 
-  fillSelect('sel-mic-device', inputs, 'По умолчанию (Системный)');
-  fillSelect('sel-spk-device', outputs, 'По умолчанию (Наушники)');
-  fillSelect('sel-cable-device', outputs, 'CABLE Input (VB-Audio Virtual Cable)');
+  const savedMic = lastLoadedConfig ? lastLoadedConfig.selected_mic : null;
+  const savedHp = lastLoadedConfig ? lastLoadedConfig.selected_headphones : null;
+  const savedCable = lastLoadedConfig ? lastLoadedConfig.selected_cable_in : null;
+
+  fillSelect('sel-mic-device', inputs, 'По умолчанию (Системный)', savedMic);
+  fillSelect('sel-spk-device', outputs, 'По умолчанию (Наушники)', savedHp);
+  fillSelect('sel-cable-device', outputs, 'CABLE Input (VB-Audio Virtual Cable)', savedCable);
 };

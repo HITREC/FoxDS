@@ -28,7 +28,7 @@ impl ProsodyEnhancer {
                 }
             }
         } else {
-            let conjunctions = [" but ", " because ", " so ", " although ", " however "];
+            let conjunctions = [" but ", " because ", " although ", " however "];
             for conj in conjunctions {
                 let comma_conj = format!(",{}", conj);
                 if !result.contains(&comma_conj) {

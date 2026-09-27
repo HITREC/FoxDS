@@ -115,7 +115,8 @@ pub fn play_tts_audio_dsp(
                     DeviceSinkBuilder::open_default_sink()
                 };
 
-                if let Ok(sink_handle) = sink_res {
+                if let Ok(mut sink_handle) = sink_res {
+                    sink_handle.log_on_drop(false);
                     let player = Player::connect_new(sink_handle.mixer());
                     player.set_volume(volume);
                     let buffer = rodio::buffer::SamplesBuffer::new(channels, sample_rate, s_data.as_ref().clone());
@@ -138,7 +139,8 @@ pub fn play_tts_audio_dsp(
                     DeviceSinkBuilder::open_default_sink()
                 };
 
-                if let Ok(sink_handle) = sink_res {
+                if let Ok(mut sink_handle) = sink_res {
+                    sink_handle.log_on_drop(false);
                     let player = Player::connect_new(sink_handle.mixer());
                     player.set_volume(volume);
                     let buffer = rodio::buffer::SamplesBuffer::new(channels, sample_rate, c_data.as_ref().clone());
@@ -158,7 +160,8 @@ pub fn play_tts_audio_dsp(
                     DeviceSinkBuilder::open_default_sink()
                 };
 
-                if let Ok(sink_handle) = sink_res {
+                if let Ok(mut sink_handle) = sink_res {
+                    sink_handle.log_on_drop(false);
                     let player = Player::connect_new(sink_handle.mixer());
                     player.set_volume(volume * 0.95);
                     let buffer = rodio::buffer::SamplesBuffer::new(channels, sample_rate, h_data.as_ref().clone());
@@ -183,7 +186,8 @@ pub fn play_tts_audio_dsp(
                 DeviceSinkBuilder::open_default_sink()
             };
 
-            if let Ok(sink_handle) = sink_res {
+            if let Ok(mut sink_handle) = sink_res {
+                sink_handle.log_on_drop(false);
                 let player = Player::connect_new(sink_handle.mixer());
                 player.set_volume(volume);
                 if let Ok(decoder) = Decoder::try_from(Cursor::new(raw_bytes)) {
@@ -249,7 +253,8 @@ pub fn play_headphones_audio_dsp(
             DeviceSinkBuilder::open_default_sink()
         };
 
-        if let Ok(sink_handle) = sink_res {
+        if let Ok(mut sink_handle) = sink_res {
+            sink_handle.log_on_drop(false);
             let player = Player::connect_new(sink_handle.mixer());
             player.set_volume(volume);
 

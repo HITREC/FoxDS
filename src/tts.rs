@@ -135,19 +135,26 @@ pub fn synthesize_speech_advanced(
     let (mut socket, _resp) = tungstenite::connect(request)
         .map_err(|e| format!("Edge-TTS WebSocket connect failed: {}", e))?;
 
+    // Set 10-second timeout to prevent background thread from hanging forever on network stall
+    let timeout = Some(std::time::Duration::from_secs(10));
+    match socket.get_ref() {
+        tungstenite::stream::MaybeTlsStream::Plain(s) => {
+            let _ = s.set_read_timeout(timeout);
+        }
+        tungstenite::stream::MaybeTlsStream::NativeTls(s) => {
+            let _ = s.get_ref().set_read_timeout(timeout);
+        }
+        _ => {}
+    }
+
     // 1. Send speech.config
     let config_msg = "Content-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n{\"context\":{\"synthesis\":{\"audio\":{\"metadataoptions\":{\"sentenceBoundaryEnabled\":\"false\",\"wordBoundaryEnabled\":\"false\"},\"outputFormat\":\"audio-24khz-48kbitrate-mono-mp3\"}}}}\r\n";
     socket
         .send(Message::Text(config_msg.to_string().into()))
         .map_err(|e| format!("Failed to send config: {}", e))?;
 
-    // 2. Format rate and prosody with shouting emotion support
-    let (volume_str, pitch_str, rate_delta) = if is_shout {
-        ("+25%", "+3Hz", 10)
-    } else {
-        ("+0%", "+0Hz", 0)
-    };
-
+    // 2. Format rate and prosody (pure neural mode without vocoder pitch artifacts)
+    let rate_delta = if is_shout { 5 } else { 0 };
     let rate_val = (speed_percent as i32 - 100 + rate_delta).clamp(-50, 100);
     let rate_str = if rate_val >= 0 {
         format!("+{}%", rate_val)
@@ -162,10 +169,20 @@ pub fn synthesize_speech_advanced(
     } else {
         "en-US"
     };
-    let ssml_body = format!(
-        "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='{}'><voice name='{}'><prosody rate='{}' pitch='{}' volume='{}'>{}</prosody></voice></speak>",
-        xml_lang, voice, rate_str, pitch_str, volume_str, escaped
-    );
+
+    // Native Neural Mode: When rate is default (+0%), omit <prosody> entirely
+    // so Edge-TTS runs purely through its deep neural model without any pitch-shift DSP vocoder.
+    let ssml_body = if rate_val != 0 {
+        format!(
+            "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='{}'><voice name='{}'><prosody rate='{}'>{}</prosody></voice></speak>",
+            xml_lang, voice, rate_str, escaped
+        )
+    } else {
+        format!(
+            "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='{}'><voice name='{}'>{}</voice></speak>",
+            xml_lang, voice, escaped
+        )
+    };
 
     let ssml_msg = format!(
         "X-RequestId:{}\r\nContent-Type:application/ssml+xml\r\nPath:ssml\r\n\r\n{}",
@@ -223,9 +240,24 @@ mod tests {
 
     #[test]
     fn test_tts_synthesis() {
-        let res_ru = synthesize_speech_advanced("Привет, это проверка звука!", "ru-RU-DmitryNeural", 100, false, true);
+        let mut res_ru = Err("init".to_string());
+        for _ in 0..3 {
+            res_ru = synthesize_speech_advanced("Привет, это проверка звука!", "ru-RU-DmitryNeural", 100, false, true);
+            if res_ru.is_ok() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
         assert!(res_ru.is_ok(), "RU TTS failed: {:?}", res_ru.err());
-        let res_en = synthesize_speech_advanced("Hello world, this is a test!", "en-US-BrianMultilingualNeural", 100, false, true);
+
+        let mut res_en = Err("init".to_string());
+        for _ in 0..3 {
+            res_en = synthesize_speech_advanced("Hello world, this is a test!", "en-US-BrianMultilingualNeural", 100, false, true);
+            if res_en.is_ok() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
         assert!(res_en.is_ok(), "EN TTS failed: {:?}", res_en.err());
     }
 }

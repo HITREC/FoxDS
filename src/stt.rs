@@ -25,7 +25,7 @@ pub fn get_client() -> &'static Client {
 
 /// Convert float audio samples at any sample rate to 16-bit 16000Hz mono PCM
 pub fn resample_to_16k(input: &[f32], source_rate: u32) -> Vec<i32> {
-    if input.is_empty() {
+    if input.is_empty() || source_rate == 0 {
         return Vec::new();
     }
     if source_rate == 16000 {

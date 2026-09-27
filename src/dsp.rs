@@ -35,30 +35,25 @@ impl AudioDsp {
             return;
         }
 
-        // 2. Studio Warmth & De-Harshing Equalizer (removes robotic vocoder glare)
+        // 2. Studio Warmth & Vocal Presence Equalizer (Pure natural human tone)
         if apply_warmth_eq {
-            // Cut harsh digital resonance at 3100 Hz (typical TTS metallic peak)
-            Self::apply_notch(samples, 3100.0, 1.2, sr);
+            // Subtle chest resonance at 120 Hz (+1.2 dB)
+            Self::apply_low_shelf(samples, 120.0, 1.2, sr);
 
-            // Gentle low-end warmth at 140 Hz (adds chest resonance)
-            Self::apply_low_shelf(samples, 140.0, 2.5, sr);
-
-            // Breath / Air boost at 9500 Hz
-            Self::apply_high_shelf(samples, 9500.0, 1.8, sr);
+            // Gentle air / presence boost at 9000 Hz (+1.0 dB)
+            Self::apply_high_shelf(samples, 9000.0, 1.0, sr);
         }
 
-        // 3. Analog Tube Harmonic Warmth (Soft non-linear saturation)
+        // 3. Transparent Peak Limiter (Smooth Soft-Knee Saturation)
+        // Eliminates digital clipping and buzzing when TTS gain > 1.0, without adding metallic odd harmonics.
         if apply_tube_saturation {
             for s in samples.iter_mut() {
                 let x = *s;
-                // Soft-knee cubic saturation curve: f(x) = 1.25 * (x - 0.2 * x^3)
-                // Adds subtle 2nd and 3rd harmonics to give warmth to synthetic voices
                 let abs_x = x.abs();
-                if abs_x < 0.8 {
-                    *s = x * 1.15 - 0.18 * x * x * x;
-                } else {
+                if abs_x > 0.85 {
                     let sign = if x >= 0.0 { 1.0 } else { -1.0 };
-                    *s = sign * (0.8 + (abs_x - 0.8) / (1.0 + (abs_x - 0.8)));
+                    let excess = abs_x - 0.85;
+                    *s = sign * (0.85 + excess / (1.0 + excess * 2.0));
                 }
             }
         }
@@ -66,7 +61,9 @@ impl AudioDsp {
 
     /// Second-order IIR Notch / Peaking filter
     fn apply_notch(samples: &mut [f32], freq: f32, q: f32, sample_rate: f32) {
-        let w0 = 2.0 * PI * (freq / sample_rate);
+        let max_freq = sample_rate * 0.45;
+        let safe_freq = freq.clamp(20.0, max_freq);
+        let w0 = 2.0 * PI * (safe_freq / sample_rate);
         let alpha = w0.sin() / (2.0 * q);
         let cos_w0 = w0.cos();
 
@@ -79,12 +76,16 @@ impl AudioDsp {
         let a1 = -2.0 * cos_w0;
         let a2 = 1.0 - alpha * a;
 
-        Self::biquad_filter(samples, b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0);
+        if a0.abs() > 1e-6 {
+            Self::biquad_filter(samples, b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0);
+        }
     }
 
     /// First-order Low-pass filter
     fn apply_low_pass(samples: &mut [f32], cutoff_freq: f32, sample_rate: f32) {
-        let rc = 1.0 / (2.0 * PI * cutoff_freq);
+        let max_freq = sample_rate * 0.45;
+        let safe_cutoff = cutoff_freq.clamp(20.0, max_freq);
+        let rc = 1.0 / (2.0 * PI * safe_cutoff);
         let dt = 1.0 / sample_rate;
         let alpha = dt / (rc + dt);
 
@@ -97,7 +98,9 @@ impl AudioDsp {
 
     /// First-order High-pass filter
     fn apply_high_pass(samples: &mut [f32], cutoff_freq: f32, sample_rate: f32) {
-        let rc = 1.0 / (2.0 * PI * cutoff_freq);
+        let max_freq = sample_rate * 0.45;
+        let safe_cutoff = cutoff_freq.clamp(20.0, max_freq);
+        let rc = 1.0 / (2.0 * PI * safe_cutoff);
         let dt = 1.0 / sample_rate;
         let alpha = rc / (rc + dt);
 
@@ -114,8 +117,10 @@ impl AudioDsp {
 
     /// Low-shelf filter for vocal chest resonance
     fn apply_low_shelf(samples: &mut [f32], freq: f32, gain_db: f32, sample_rate: f32) {
+        let max_freq = sample_rate * 0.45;
+        let safe_freq = freq.clamp(20.0, max_freq);
         let a = 10.0f32.powf(gain_db / 40.0);
-        let w0 = 2.0 * PI * (freq / sample_rate);
+        let w0 = 2.0 * PI * (safe_freq / sample_rate);
         let cos_w0 = w0.cos();
         let sin_w0 = w0.sin();
         let alpha = sin_w0 / 2.0 * (2.0f32).sqrt();
@@ -127,13 +132,17 @@ impl AudioDsp {
         let a1 = -2.0 * ((a - 1.0) + (a + 1.0) * cos_w0);
         let a2 = (a + 1.0) + (a - 1.0) * cos_w0 - 2.0 * a.sqrt() * alpha;
 
-        Self::biquad_filter(samples, b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0);
+        if a0.abs() > 1e-6 {
+            Self::biquad_filter(samples, b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0);
+        }
     }
 
     /// High-shelf filter for airy human breath
     fn apply_high_shelf(samples: &mut [f32], freq: f32, gain_db: f32, sample_rate: f32) {
+        let max_freq = sample_rate * 0.45;
+        let safe_freq = freq.clamp(20.0, max_freq);
         let a = 10.0f32.powf(gain_db / 40.0);
-        let w0 = 2.0 * PI * (freq / sample_rate);
+        let w0 = 2.0 * PI * (safe_freq / sample_rate);
         let cos_w0 = w0.cos();
         let sin_w0 = w0.sin();
         let alpha = sin_w0 / 2.0 * (2.0f32).sqrt();
@@ -145,7 +154,9 @@ impl AudioDsp {
         let a1 = 2.0 * ((a - 1.0) - (a + 1.0) * cos_w0);
         let a2 = (a + 1.0) - (a - 1.0) * cos_w0 - 2.0 * a.sqrt() * alpha;
 
-        Self::biquad_filter(samples, b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0);
+        if a0.abs() > 1e-6 {
+            Self::biquad_filter(samples, b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0);
+        }
     }
 
     #[inline(always)]
@@ -166,3 +177,38 @@ impl AudioDsp {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_dsp_stability_across_sample_rates() {
+        let sample_rates = [8000, 16000, 22050, 24000, 44100, 48000];
+        for &sr in &sample_rates {
+            let mut samples: Vec<f32> = (0..1000)
+                .map(|i| (i as f32 * 0.1).sin() * 0.5)
+                .collect();
+
+            // Test warm equalizer + tube saturation
+            AudioDsp::process_samples(&mut samples, sr, true, true, false);
+            assert!(
+                !samples.iter().any(|s| s.is_nan() || s.is_infinite()),
+                "DSP produced NaN or Inf at sample_rate: {}",
+                sr
+            );
+
+            // Test radio filter
+            let mut radio_samples: Vec<f32> = (0..1000)
+                .map(|i| (i as f32 * 0.1).sin() * 0.5)
+                .collect();
+            AudioDsp::process_samples(&mut radio_samples, sr, false, false, true);
+            assert!(
+                !radio_samples.iter().any(|s| s.is_nan() || s.is_infinite()),
+                "Radio filter produced NaN or Inf at sample_rate: {}",
+                sr
+            );
+        }
+    }
+}
+

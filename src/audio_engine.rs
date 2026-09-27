@@ -254,6 +254,13 @@ impl AudioEngine {
                 if let Ok(s) = stream_res {
                     let _ = s.play();
                     while is_running.load(Ordering::SeqCst) {
+                        let cur_mic = {
+                            let cfg = config.lock();
+                            cfg.selected_mic.clone()
+                        };
+                        if cur_mic != selected_mic {
+                            break; // User selected another microphone; reconnect with new device
+                        }
                         thread::sleep(Duration::from_millis(200));
                     }
                 } else {
@@ -462,12 +469,12 @@ impl AudioEngine {
                 if let Ok(s) = stream_res {
                     let _ = s.play();
                     while is_running.load(Ordering::SeqCst) {
-                        let (in_sub, in_tts) = {
+                        let (in_sub, in_tts, cur_hp) = {
                             let cfg = config.lock();
-                            (cfg.incoming_enabled, cfg.incoming_tts_enabled)
+                            (cfg.incoming_enabled, cfg.incoming_tts_enabled, cfg.selected_headphones.clone())
                         };
-                        if !in_sub && !in_tts {
-                            break;
+                        if (!in_sub && !in_tts) || cur_hp != selected_hp {
+                            break; // User toggled features or changed headphones; reconnect stream
                         }
                         thread::sleep(Duration::from_millis(250));
                     }
@@ -656,15 +663,14 @@ impl AudioEngine {
                     return;
                 }
 
-                // Format original English speech with emotion/intonation (ALL CAPS if shouted)
+                // Format original English speech
                 let formatted_en = format_with_emotion(clean, peak_rms);
 
-                // Translate English speech to Russian
-                match translate_text(&formatted_en.display_text, "en", "ru") {
+                // Translate English speech to Russian using natural casing
+                match translate_text(&formatted_en.tts_text, "en", "ru") {
                     Ok(trans) => {
                         let trans_clean = trans.trim();
                         if !trans_clean.is_empty() {
-                            // Format Russian translation preserving the same emotion (ALL CAPS if shouted)
                             let formatted_ru = format_with_emotion(trans_clean, peak_rms);
 
                             if incoming_enabled {
@@ -678,7 +684,7 @@ impl AudioEngine {
                             if incoming_tts_enabled {
                                 let voice = incoming_voice.to_string();
                                 let hp_name = selected_hp.to_string();
-                                let trans_text = formatted_ru.display_text.clone();
+                                let trans_text = formatted_ru.tts_text.clone(); // Natural casing for clean neural synthesis
                                 let is_shout = formatted_ru.is_shout;
                                 let flag = is_tts_playing.clone();
                                 let last_t = last_tts_time.clone();
@@ -806,7 +812,7 @@ impl AudioEngine {
                                     "".to_string(),
                                 ));
 
-                                match translate_text(&formatted_ru.display_text, "ru", "en") {
+                                match translate_text(&formatted_ru.tts_text, "ru", "en") {
                                     Ok(translated) => {
                                         let trans = translated.trim();
                                         let formatted_en = format_with_emotion(trans, peak_rms);
@@ -833,7 +839,7 @@ impl AudioEngine {
                                         };
 
                                         match crate::tts::synthesize_speech_advanced(
-                                            &formatted_en.display_text,
+                                            &formatted_en.tts_text, // Natural casing produces human tone
                                             &voice,
                                             speed,
                                             formatted_en.is_shout,
@@ -884,6 +890,7 @@ impl AudioEngine {
 #[derive(Debug, Clone)]
 pub struct FormattedSpeech {
     pub display_text: String,
+    pub tts_text: String,
     pub is_shout: bool,
     pub is_question: bool,
 }
@@ -908,17 +915,17 @@ pub fn format_with_emotion(text: &str, peak_rms: f32) -> FormattedSpeech {
     if clean.is_empty() {
         return FormattedSpeech {
             display_text: String::new(),
+            tts_text: String::new(),
             is_shout: false,
             is_question: false,
         };
     }
 
-    // Acoustic shouting threshold (RMS >= 0.065 is clearly loud/shouted speech in voice chat / mic)
-    let acoustic_shout = peak_rms >= 0.065;
+    // Acoustic shouting threshold (RMS >= 0.075 is loud shouting in voice chat)
+    let acoustic_shout = peak_rms >= 0.075;
     let alpha_chars: Vec<char> = clean.chars().filter(|c| c.is_alphabetic()).collect();
-    let text_all_caps = alpha_chars.len() >= 3 && alpha_chars.iter().all(|c| c.is_uppercase());
-    let text_exclaim = clean.contains('!') || text_all_caps;
-    let is_shout = acoustic_shout || text_exclaim;
+    let text_all_caps = alpha_chars.len() >= 4 && alpha_chars.iter().all(|c| c.is_uppercase());
+    let is_shout = acoustic_shout || text_all_caps;
 
     // Question detection: ending question mark or typical question words
     let clean_lower = clean.to_lowercase();
@@ -941,26 +948,42 @@ pub fn format_with_emotion(text: &str, peak_rms: f32) -> FormattedSpeech {
         || clean_lower.starts_with("откуда ")
         || clean_lower.starts_with("как ");
 
-    let mut result = clean.to_string();
+    // 1. Prepare natural casing for TTS (first letter capitalized, rest natural sentence casing)
+    let mut tts_raw = if text_all_caps {
+        clean.to_lowercase()
+    } else {
+        clean.to_string()
+    };
 
-    if is_shout {
-        result = result.to_uppercase();
-        if is_question {
-            if !result.ends_with("?!") && !result.ends_with("!?") {
-                if result.ends_with('?') {
-                    result.pop();
-                }
-                result.push_str("?!");
-            }
-        } else if !result.ends_with('!') {
-            result.push('!');
+    if is_question {
+        if !tts_raw.ends_with('?') && !tts_raw.ends_with("?!") && !tts_raw.ends_with("!?") {
+            tts_raw.push('?');
         }
-    } else if is_question && !result.ends_with('?') {
-        result.push('?');
+    } else if is_shout && !tts_raw.ends_with('!') {
+        tts_raw.push('!');
+    }
+
+    let mut chars = tts_raw.chars();
+    let tts_text = match chars.next() {
+        Some(f) => f.to_uppercase().collect::<String>() + chars.as_str(),
+        None => tts_raw.clone(),
+    };
+
+    // 2. Prepare high-visibility display text for HUD
+    let mut display_text = tts_text.clone();
+    if is_shout {
+        display_text = display_text.to_uppercase();
+        if is_question && !display_text.ends_with("?!") && !display_text.ends_with("!?") {
+            if display_text.ends_with('?') {
+                display_text.pop();
+            }
+            display_text.push_str("?!");
+        }
     }
 
     FormattedSpeech {
-        display_text: result,
+        display_text,
+        tts_text,
         is_shout,
         is_question,
     }
@@ -979,23 +1002,33 @@ mod tests {
         // Normal speech
         let normal = format_with_emotion("enemy spotted", 0.02);
         assert!(!normal.is_shout);
-        assert_eq!(normal.display_text, "enemy spotted");
+        assert_eq!(normal.display_text, "Enemy spotted");
+        assert_eq!(normal.tts_text, "Enemy spotted");
 
-        // Acoustic shouting (peak RMS >= 0.065)
+        // Acoustic shouting (peak RMS >= 0.075)
         let shout = format_with_emotion("watch out sniper", 0.09);
         assert!(shout.is_shout);
         assert_eq!(shout.display_text, "WATCH OUT SNIPER!");
+        assert_eq!(shout.tts_text, "Watch out sniper!");
 
         // Question detection
         let q = format_with_emotion("where is the tank", 0.03);
         assert!(q.is_question);
-        assert_eq!(q.display_text, "where is the tank?");
+        assert_eq!(q.display_text, "Where is the tank?");
+        assert_eq!(q.tts_text, "Where is the tank?");
 
         // Shouted question
         let q_shout = format_with_emotion("what are you doing", 0.11);
         assert!(q_shout.is_shout);
         assert!(q_shout.is_question);
         assert_eq!(q_shout.display_text, "WHAT ARE YOU DOING?!");
+        assert_eq!(q_shout.tts_text, "What are you doing?");
+
+        // All-caps input normalized to sentence casing for neural TTS to prevent robotic delivery
+        let caps_input = format_with_emotion("WATCH OUT SNIPER", 0.02);
+        assert!(caps_input.is_shout);
+        assert_eq!(caps_input.display_text, "WATCH OUT SNIPER!");
+        assert_eq!(caps_input.tts_text, "Watch out sniper!");
     }
 
     #[test]

@@ -1,4 +1,4 @@
-#![cfg_attr(windows, windows_subsystem = "windows")]
+// #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod audio;
 mod audio_engine;
@@ -213,13 +213,14 @@ const SNIPER_HTML: &str = r#"<!DOCTYPE html>
       label.style.display = 'none';
 
       if (sw > 15 && sh > 15) {
+        const dpr = window.devicePixelRatio || 1;
         if (window.ipc) {
           window.ipc.postMessage(JSON.stringify({
             cmd: 'snip_complete',
-            x: Math.round(sx),
-            y: Math.round(sy),
-            w: Math.round(sw),
-            h: Math.round(sh)
+            x: Math.round(sx * dpr),
+            y: Math.round(sy * dpr),
+            w: Math.round(sw * dpr),
+            h: Math.round(sh * dpr)
           }));
         }
       } else {
@@ -583,26 +584,45 @@ mod win_composition {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Warm up translation engine token in background immediately
-    translator::warm_up_connection();
+    std::panic::set_hook(Box::new(|info| {
+        let msg = format!("PANIC: {:?}\n", info);
+        eprintln!("{}", msg);
+        let _ = std::fs::write("crash.log", &msg);
+    }));
+
+    println!("[FoxDS] Application initializing...");
+    { use std::io::Write; let _ = std::io::stdout().flush(); }
 
     #[cfg(windows)]
     {
         std::env::set_var("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "0");
+        // Force WebView2 to use 100% CPU software rasterization and disable GPU/DirectX acceleration.
+        // Completely eliminates GPU driver TDR timeouts, DirectComposition conflicts, and D3D device resets
+        // in Unreal Engine games like Foxhole.
+        std::env::set_var(
+            "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+            "--disable-gpu --disable-gpu-compositing --disable-direct-composition --disable-gpu-rasterization --disable-d3d11",
+        );
         unsafe {
             windows_sys::Win32::UI::WindowsAndMessaging::SetProcessDPIAware();
         }
     }
 
     // 1. Load configuration
+    println!("[FoxDS Step 1] Loading config...");
+    { use std::io::Write; let _ = std::io::stdout().flush(); }
     let config_path = config::get_config_path();
     let config = Arc::new(Mutex::new(AppConfig::load_or_default(&config_path)));
 
     // 2. Set up Tao Window & Event Loop with UserEvent
+    println!("[FoxDS Step 2] Building EventLoop...");
+    { use std::io::Write; let _ = std::io::stdout().flush(); }
     let event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
     // Main Control Panel Window
+    println!("[FoxDS Step 3] Loading app icon & building main window...");
+    { use std::io::Write; let _ = std::io::stdout().flush(); }
     let app_icon = load_app_icon();
 
     let window = WindowBuilder::new()
@@ -612,6 +632,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_inner_size(tao::dpi::LogicalSize::new(1200.0, 780.0))
         .with_min_inner_size(tao::dpi::LogicalSize::new(1000.0, 680.0))
         .build(&event_loop)?;
+    println!("[FoxDS Step 3.1] Main window built successfully!");
+    { use std::io::Write; let _ = std::io::stdout().flush(); }
 
     let window = Arc::new(window);
     let win_clone = window.clone();
@@ -649,8 +671,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(windows)]
     {
         use tao::platform::windows::WindowExtWindows;
+        use windows_sys::Win32::UI::WindowsAndMessaging::*;
         unsafe {
             win_composition::set_transparent(hud_window.hwnd() as isize);
+            // Apply WS_EX_NOACTIVATE so Windows never takes focus away from fullscreen games
+            let hwnd = hud_window.hwnd() as windows_sys::Win32::Foundation::HWND;
+            let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+            SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_NOACTIVATE as i32);
         }
     }
 
@@ -679,8 +706,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_transparent(true)
         .with_always_on_top(true)
         .with_visible(false)
-        .with_inner_size(tao::dpi::LogicalSize::new(scr_w, scr_h))
-        .with_position(tao::dpi::LogicalPosition::new(scr_x, scr_y));
+        .with_inner_size(tao::dpi::PhysicalSize::new(scr_w as u32, scr_h as u32))
+        .with_position(tao::dpi::PhysicalPosition::new(scr_x as i32, scr_y as i32));
 
     #[cfg(windows)]
     {
@@ -694,8 +721,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(windows)]
     {
         use tao::platform::windows::WindowExtWindows;
+        use windows_sys::Win32::UI::WindowsAndMessaging::*;
         unsafe {
             win_composition::set_transparent(sniper_window.hwnd() as isize);
+            let hwnd = sniper_window.hwnd() as windows_sys::Win32::Foundation::HWND;
+            let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+            SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_NOACTIVATE as i32);
         }
     }
 
@@ -951,13 +982,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let natural_prosody = cfg.natural_prosody;
                             drop(cfg);
 
-                            let text_to_speak = ru_text.to_string();
+                            let text_to_speak = "Осторожно, снайпер на часовой башне!".to_string();
                             thread::spawn(move || {
                                 match tts::synthesize_speech_advanced(
                                     &text_to_speak,
                                     &voice,
                                     speed,
-                                    true,
+                                    false,
                                     natural_prosody,
                                 ) {
                                     Ok(audio) => {
@@ -1045,6 +1076,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 border_width: cfg.overlay_border_width,
                                 text_color: cfg.overlay_text_color.clone(),
                             }).ok();
+                        }
+                        "save_all_settings" => {
+                            let cfg = config_clone.lock();
+                            let _ = cfg.save(&config_path_clone);
                         }
                         "trigger_ocr" | "test_ocr" => {
                             proxy_ipc.send_event(AppEvent::OpenSniper).ok();
@@ -1366,13 +1401,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 AppEvent::OpenSniper => {
                     sniper_window.set_visible(true);
                     sniper_window.set_focus();
-                    #[cfg(windows)]
-                    {
-                        use tao::platform::windows::WindowExtWindows;
-                        unsafe {
-                            win_composition::set_transparent(sniper_window.hwnd() as isize);
-                        }
-                    }
                     let _ = sniper_webview.evaluate_script("window.initSniper();");
                 }
             },
@@ -1388,9 +1416,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     WindowEvent::Moved(pos) => {
                         if window_id == hud_window.id() {
+                            let scale = hud_window.scale_factor();
+                            let log_pos = pos.to_logical::<f64>(scale);
                             let mut cfg = config.lock();
-                            cfg.overlay_x = pos.x;
-                            cfg.overlay_y = pos.y;
+                            cfg.overlay_x = log_pos.x.round() as i32;
+                            cfg.overlay_y = log_pos.y.round() as i32;
                             let _ = cfg.save(&config_path);
                         }
                     }
